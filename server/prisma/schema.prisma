@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+  // Keep these for v5.10.2
+  previewFeatures = ["fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id           BigInt    @id @default(autoincrement())
+  client_id    String    @unique @db.VarChar(100)
+  name         String    @db.VarChar(255)
+  email        String?   @db.VarChar(255)
+  phone        String?   @db.VarChar(50)
+  company      String?   @db.VarChar(255)
+  address      String?   @db.Text
+  city         String?   @db.VarChar(100)
+  state        String?   @db.VarChar(100)
+  country      String?   @db.VarChar(100)
+  postal_code  String?   @db.VarChar(50)
+  
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@index([email])
+  @@index([company])
+  @@index([phone])
+  @@fulltext([name, email, company])
+  @@map("clients")
+}
+
+model ImportLog {
+  id                Int       @id @default(autoincrement())
+  import_id         String    @unique @db.VarChar(100)
+  file_name         String?
+  total_records     Int       @default(0)
+  inserted_records  Int       @default(0)
+  updated_records   Int       @default(0)
+  failed_records    Int       @default(0)
+  status            String    @default("pending")
+  started_at        DateTime  @default(now())
+  completed_at      DateTime?
+  duration_ms       Int?      @default(0) 
+
+  @@map("import_logs")
+}
