@@ -1,6 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
-  // Keep these for v5.10.2
+  provider        = "prisma-client-js"
   previewFeatures = ["fullTextSearch", "fullTextIndex"]
 }
 
@@ -10,40 +9,51 @@ datasource db {
 }
 
 model Client {
-  id           BigInt    @id @default(autoincrement())
-  client_id    String    @unique @db.VarChar(100)
-  name         String    @db.VarChar(255)
-  email        String?   @db.VarChar(255)
-  phone        String?   @db.VarChar(50)
-  company      String?   @db.VarChar(255)
-  address      String?   @db.Text
-  city         String?   @db.VarChar(100)
-  state        String?   @db.VarChar(100)
-  country      String?   @db.VarChar(100)
-  postal_code  String?   @db.VarChar(50)
-  
-  created_at   DateTime  @default(now())
-  updated_at   DateTime  @updatedAt
+  id          BigInt   @id @default(autoincrement())
+  client_id   String   @unique @db.VarChar(100)
+  name        String   @db.VarChar(255)
+  email       String?  @db.VarChar(255)
+  phone       String?  @db.VarChar(50)
+  company     String?  @db.VarChar(255)
+  address     String?  @db.Text
+  city        String?  @db.VarChar(100)
+  state       String?  @db.VarChar(100)
+  country     String?  @db.VarChar(100)
+  postal_code String?  @db.VarChar(50)
+  metadata    Json?
+  is_active   Boolean  @default(true)
+  import_id   String?  @db.VarChar(100)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
 
   @@index([email])
-  @@index([company])
   @@index([phone])
-  @@fulltext([name, email, company])
+  @@index([company])
+  @@index([city])
+  @@index([import_id])
+  @@fulltext([name, email, company, city])
   @@map("clients")
 }
 
 model ImportLog {
-  id                Int       @id @default(autoincrement())
-  import_id         String    @unique @db.VarChar(100)
-  file_name         String?
-  total_records     Int       @default(0)
-  inserted_records  Int       @default(0)
-  updated_records   Int       @default(0)
-  failed_records    Int       @default(0)
-  status            String    @default("pending")
-  started_at        DateTime  @default(now())
-  completed_at      DateTime?
-  duration_ms       Int?      @default(0) 
+  id               Int       @id @default(autoincrement())
+  import_id        String    @unique @db.VarChar(100)
+  file_name        String?   @db.VarChar(255)
+  file_size        BigInt?   @default(0)
+  total_records    Int       @default(0)
+  processed        Int       @default(0)
+  inserted_records Int       @default(0)
+  updated_records  Int       @default(0)
+  failed_records   Int       @default(0)
+  status           String    @default("pending") @db.VarChar(50)
+  error_message    String?   @db.Text
+  detected_schema  Json?
+  field_mappings   Json?
+  started_at       DateTime  @default(now())
+  completed_at     DateTime?
+  duration_ms      Int?      @default(0)
 
+  @@index([status])
+  @@index([started_at])
   @@map("import_logs")
 }

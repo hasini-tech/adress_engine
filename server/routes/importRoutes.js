@@ -2,15 +2,15 @@ const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/importController');
 
-// Debug check to ensure controller is loaded
-if (!controller.importClients || !controller.search) {
-    console.error("❌ CRITICAL ERROR: Controller functions not found!");
-    console.error("   Make sure importController.js is exporting 'importClients' and 'search'");
-    process.exit(1); // Stop server if controller is broken
-}
-
-// Route definitions
+// Import endpoint
 router.post('/import', controller.importClients);
+
+// Client endpoints
+router.get('/clients', controller.getClients);
 router.get('/clients/search', controller.search);
+
+// Admin endpoints
+router.get('/imports', controller.getImportHistory);
+router.get('/stats', controller.getStats);
 
 module.exports = router;
