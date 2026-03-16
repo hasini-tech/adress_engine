@@ -1,82 +1,109 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { toast } from 'react-toastify';
-import api from '../api';
+
+// ─── Hard-coded upload URL — do NOT go through the axios instance.
+//    The shared api.js has a 5-min timeout that kills 1.3 GB uploads.
+//    XHR gives us: no timeout + real upload progress + full error detail.
+const UPLOAD_URL = 'http://localhost:5000/api/import/file';
 
 const DataImport = () => {
-  const [file, setFile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState(null);
+  const [file, setFile]         = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stats, setStats]       = useState(null);
+  const [xhrRef]                = useState({ current: null });
 
   const onDrop = useCallback((acceptedFiles) => {
-    // 1. Take the first file uploaded
     const selected = acceptedFiles[0];
-
-    // 2. Manual Validation: Check if filename ends with .json
-    // This bypasses strict MIME type checks that fail on some Windows machines
-    if (selected && !selected.name.toLowerCase().endsWith('.json')) {
+    if (!selected) return;
+    if (!selected.name.toLowerCase().endsWith('.json')) {
       toast.error('❌ Invalid file. Please upload a .json file.');
       return;
     }
-
-    if (selected) {
-      setFile(selected);
-      setStats(null);
-      toast.info(`📄 File selected: ${selected.name}`);
-    }
+    setFile(selected);
+    setStats(null);
+    setProgress(0);
+    toast.info(`📄 ${selected.name} (${(selected.size / 1024 / 1024).toFixed(1)} MB)`);
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    // 3. CRITICAL FIX: We removed the 'accept' prop. 
-    // This allows the file to be dropped, and we validate the extension manually above.
-    multiple: false
+    multiple: false,
+    accept: { 'application/json': ['.json'] }
   });
 
   const handleImport = () => {
-    if (!file) return;
+    if (!file || loading) return;
+
     setLoading(true);
+    setProgress(0);
 
-    const reader = new FileReader();
-    
-    reader.onload = async (e) => {
-      try {
-        // 4. Validate Content: Try to parse JSON
-        let jsonData;
-        try {
-          jsonData = JSON.parse(e.target.result);
-        } catch (parseError) {
-          throw new Error("File content is not valid JSON. Please check syntax.");
-        }
+    const formData = new FormData();
+    formData.append('file', file); // raw File object — NEVER FileReader/readAsText
 
-        // 5. Validate Structure: Must be an Array
-        if (!Array.isArray(jsonData)) {
-          throw new Error("JSON format error: Data must be an array of objects [{}, {}]");
-        }
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
 
-        toast.loading("🚀 Uploading and processing records...");
-
-        // Send to backend
-        const response = await api.post('/import', { clients: jsonData });
-        
-        toast.dismiss();
-        setStats(response.data.summary);
-        toast.success('✅ Import completed successfully!');
-      } catch (err) {
-        console.error(err);
-        toast.dismiss();
-        toast.error(err.response?.data?.message || err.message || 'Import failed');
-      } finally {
-        setLoading(false);
+    // Real-time upload progress (bytes sent / total bytes)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setProgress(Math.round((e.loaded / e.total) * 100));
       }
     };
 
-    reader.onerror = () => {
-      toast.error("Failed to read file");
+    xhr.onload = () => {
       setLoading(false);
+      toast.dismiss('import');
+
+      // Log exact response so you can see what server returns
+      console.log(`[Import] Status: ${xhr.status}`);
+      console.log(`[Import] Response: ${xhr.responseText.slice(0, 500)}`);
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          setStats(data.summary);
+          setProgress(0);
+          toast.success('✅ Import completed successfully!');
+        } catch {
+          toast.error('❌ Server returned invalid JSON');
+        }
+      } else {
+        // Parse error message from server
+        try {
+          const err = JSON.parse(xhr.responseText);
+          toast.error(`❌ ${err.message || `Server error ${xhr.status}`}`);
+        } catch {
+          toast.error(`❌ Request failed with status ${xhr.status}`);
+        }
+        setProgress(0);
+      }
     };
 
-    reader.readAsText(file);
+    xhr.onerror = () => {
+      setLoading(false);
+      setProgress(0);
+      toast.dismiss('import');
+      toast.error('❌ Network error — is the backend running on port 5000?');
+      console.error('[Import] Network error. Check that server is running: node server.js');
+    };
+
+    // Log the exact URL being called — check this in browser console
+    console.log(`[Import] POST → ${UPLOAD_URL}`);
+    xhr.open('POST', UPLOAD_URL);
+    xhr.timeout = 0; // no timeout — 1.3 GB needs unlimited time
+    // DO NOT set Content-Type — browser auto-sets multipart/form-data with boundary
+    xhr.send(formData);
+
+    toast.loading('🚀 Uploading... (do not close this tab)', { toastId: 'import' });
+  };
+
+  const handleCancel = () => {
+    xhrRef.current?.abort();
+    setLoading(false);
+    setProgress(0);
+    toast.info('Upload cancelled');
   };
 
   return (
@@ -84,21 +111,28 @@ const DataImport = () => {
       <h2 className="import-title">Batch Import</h2>
       <p className="import-description">Upload JSON file to process records.</p>
 
-      {/* Upload Area */}
-      <div 
-        {...getRootProps()} 
+      {/* Drop Zone */}
+      <div
+        {...getRootProps()}
         className={`upload-area ${isDragActive ? 'drag-active' : ''} ${file ? 'has-file' : ''}`}
       >
         <input {...getInputProps()} />
         <div className="upload-icon">📁</div>
-        
+
         {file ? (
           <>
             <p className="upload-text">{file.name}</p>
             <div className="file-info">
-              <span className="file-size-badge">{(file.size / 1024 / 1024).toFixed(2)} MB</span>
-              <button 
-                onClick={(e) => { e.stopPropagation(); setFile(null); }}
+              <span className="file-size-badge">
+                {(file.size / 1024 / 1024).toFixed(2)} MB
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFile(null);
+                  setStats(null);
+                  setProgress(0);
+                }}
                 className="remove-file"
               >
                 Remove
@@ -108,43 +142,101 @@ const DataImport = () => {
         ) : (
           <>
             <p className="upload-text">Drag & drop JSON file</p>
-            <p className="upload-subtext">or click to browse</p>
+            <p className="upload-subtext">or click to browse — any file size</p>
           </>
         )}
       </div>
 
-      {/* Button */}
-      <button 
-        onClick={handleImport} 
-        disabled={!file || loading}
-        className="import-button"
-      >
-        <div className="button-content">
-          {loading && <div className="spinner"></div>}
-          <span>{loading ? 'Processing...' : 'Start Import'}</span>
+      {/* Progress Bar */}
+      {loading && (
+        <div className="progress-container">
+          <div className="progress-bar-track">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${progress}%`, transition: 'width 0.3s ease' }}
+            />
+          </div>
+          <p className="progress-label">
+            {progress < 100
+              ? `Uploading... ${progress}%`
+              : '⚙️ Processing records on server — please wait...'}
+          </p>
         </div>
-      </button>
+      )}
 
-      {/* Stats Results */}
+      {/* Buttons */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={handleImport}
+          disabled={!file || loading}
+          className="import-button"
+          style={{ flex: 1 }}
+        >
+          <div className="button-content">
+            {loading && <div className="spinner" />}
+            <span>
+              {loading
+                ? progress < 100 ? `Uploading ${progress}%` : 'Processing...'
+                : 'Start Import'}
+            </span>
+          </div>
+        </button>
+
+        {loading && (
+          <button
+            onClick={handleCancel}
+            style={{
+              padding: '0 20px', borderRadius: 8, border: 'none',
+              background: '#fee2e2', color: '#dc2626',
+              fontWeight: 600, cursor: 'pointer'
+            }}
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+
+      {/* Results */}
       {stats && (
         <div className="results-container">
           <div className="results-header">
             <div className="results-icon">✓</div>
             <h3 className="results-title">Import Complete</h3>
           </div>
-          
           <div className="stats-grid">
             <div className="stat-card">
-              <div className="stat-value">{stats.totalReceived}</div>
+              <div className="stat-value">{stats.totalReceived?.toLocaleString() ?? '—'}</div>
               <div className="stat-label">Total</div>
             </div>
-            <div className="stat-card success-stat">
-              <div className="stat-value" style={{color: '#10b981'}}>{stats.newlyInserted}</div>
-              <div className="stat-label">Success</div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: '#10b981' }}>
+                {stats.newlyInserted?.toLocaleString() ?? '—'}
+              </div>
+              <div className="stat-label">Inserted</div>
             </div>
-            <div className="stat-card time-stat">
-              <div className="stat-value" style={{color: '#3b82f6'}}>{stats.speed}</div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: '#f59e0b' }}>
+                {stats.existingUpdated?.toLocaleString() ?? '—'}
+              </div>
+              <div className="stat-label">Updated</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: '#ef4444' }}>
+                {stats.failedToProcess?.toLocaleString() ?? '—'}
+              </div>
+              <div className="stat-label">Failed</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: '#3b82f6' }}>
+                {stats.speed ?? '—'}
+              </div>
               <div className="stat-label">Speed</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: '#8b5cf6' }}>
+                {stats.processingTime ?? '—'}
+              </div>
+              <div className="stat-label">Duration</div>
             </div>
           </div>
         </div>

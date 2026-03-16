@@ -1,166 +1,78 @@
-// controllers/importController.js
+const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const clientService = require('../services/clientService');
 
-/**
- * Import clients from JSON body
- */
 const importClients = async (req, res) => {
-  const importId = `IMP_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-  
+  const importId = `IMP_${uuidv4().split('-')[0]}_${Date.now()}`;
   try {
-    // Get clients array from request body
     const { clients, data, records } = req.body;
     const clientsArray = clients || data || records;
-
-    // Validate
-    if (!clientsArray) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'No data provided. Expected: { "clients": [...] }' 
-      });
+    if (!clientsArray || !Array.isArray(clientsArray) || clientsArray.length === 0) {
+      return res.status(400).json({ success: false, message: 'No data provided. Expected: { "clients": [...] }' });
     }
-
-    if (!Array.isArray(clientsArray)) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Data must be an array of objects' 
-      });
-    }
-
-    if (clientsArray.length === 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Array is empty' 
-      });
-    }
-
-    console.log(`\n📦 [${importId}] Starting import: ${clientsArray.length} records`);
-
-    // Create import log
     await prisma.importLog.create({
-      data: {
-        import_id: importId,
-        file_name: 'API_Upload',
-        total_records: clientsArray.length,
-        status: 'processing',
-        started_at: new Date()
-      }
+      data: { import_id: importId, file_name: 'API_Upload', file_size: BigInt(0), total_records: clientsArray.length, status: 'processing', started_at: new Date() }
     });
-
-    // Process import
     const summary = await clientService.processBulkImport(clientsArray, importId);
-
-    res.json({
-      success: true,
-      importId,
-      message: 'Import completed',
-      summary
-    });
-
+    res.json({ success: true, importId, message: 'Import completed', summary });
   } catch (error) {
-    console.error(`❌ [${importId}] Error:`, error.message);
-
-    try {
-      await prisma.importLog.update({
-        where: { import_id: importId },
-        data: { 
-          status: 'failed', 
-          error_message: error.message,
-          completed_at: new Date() 
-        }
-      });
-    } catch (e) {}
-
-    res.status(500).json({ 
-      success: false,
-      importId,
-      message: error.message 
-    });
+    prisma.importLog.update({ where: { import_id: importId }, data: { status: 'failed', error_message: error.message, completed_at: new Date() } }).catch(() => {});
+    res.status(500).json({ success: false, importId, message: error.message });
   }
 };
 
-/**
- * Search clients
- */
+const importFile = async (req, res) => {
+  const importId = `IMP_${uuidv4().split('-')[0]}_${Date.now()}`;
+  const filePath = req.file?.path;
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
+    await prisma.importLog.create({
+      data: { import_id: importId, file_name: req.file.originalname, file_size: BigInt(req.file.size), total_records: 0, status: 'processing', started_at: new Date() }
+    });
+    const summary = await clientService.processBulkImport(filePath, importId);
+    require('fs').unlink(filePath, () => {});
+    res.json({ success: true, importId, message: 'Import completed', summary });
+  } catch (error) {
+    if (filePath) require('fs').unlink(filePath, () => {});
+    prisma.importLog.update({ where: { import_id: importId }, data: { status: 'failed', error_message: error.message, completed_at: new Date() } }).catch(() => {});
+    res.status(500).json({ success: false, importId, message: error.message });
+  }
+};
+
 const search = async (req, res) => {
   try {
     const { q, query, page = 1, limit = 50 } = req.query;
-    const searchQuery = q || query || '';
-
-    const results = await clientService.searchClients(
-      searchQuery,
-      parseInt(page) || 1,
-      parseInt(limit) || 50
-    );
-
-    res.json(results);
-
-  } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Search failed',
-      clients: [],
-      total: 0 
-    });
-  }
+    res.json(await clientService.searchClients(q || query || '', parseInt(page) || 1, parseInt(limit) || 50));
+  } catch (error) { res.status(500).json({ success: false, message: 'Search failed' }); }
 };
 
-/**
- * Get all clients
- */
 const getClients = async (req, res) => {
   try {
     const { page = 1, limit = 50 } = req.query;
-    const results = await clientService.getAllClients(
-      parseInt(page) || 1,
-      parseInt(limit) || 50
-    );
-    res.json(results);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+    res.json(await clientService.getAllClients(parseInt(page) || 1, parseInt(limit) || 50));
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 };
 
-/**
- * Get import history
- */
 const getImportHistory = async (req, res) => {
   try {
-    const imports = await prisma.importLog.findMany({
-      take: 20,
-      orderBy: { started_at: 'desc' }
-    });
-    res.json({ success: true, imports });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const [imports, total] = await Promise.all([
+      prisma.importLog.findMany({ skip, take: parseInt(limit), orderBy: { started_at: 'desc' } }),
+      prisma.importLog.count()
+    ]);
+    res.json({ success: true, imports, total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 };
 
-/**
- * Get stats
- */
 const getStats = async (req, res) => {
   try {
     const [totalClients, recentImports] = await Promise.all([
       prisma.client.count(),
-      prisma.importLog.findMany({
-        take: 5,
-        orderBy: { started_at: 'desc' }
-      })
+      prisma.importLog.findMany({ take: 5, orderBy: { started_at: 'desc' } })
     ]);
-
     res.json({ success: true, totalClients, recentImports });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 };
 
-module.exports = {
-  importClients,
-  search,
-  getClients,
-  getImportHistory,
-  getStats
-};
+module.exports = { importClients, importFile, search, getClients, getImportHistory, getStats };

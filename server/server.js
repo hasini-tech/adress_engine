@@ -7,37 +7,33 @@ const importRoutes = require('./routes/importRoutes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// ✅ FIX: 500mb JSON body was loading entire file into RAM and crashing the process.
+//    For large imports, use file upload (multipart) instead of JSON body.
+//    Keep JSON body limit reasonable for smaller direct API calls (e.g. 10mb).
 app.use(cors());
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Routes
 app.use('/api', importRoutes);
 
-// Root
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     message: 'Client Import API',
     endpoints: {
-      import: 'POST /api/import',
-      search: 'GET /api/clients/search?q=',
+      import_json: 'POST /api/import  (body: { clients: [...] }, max ~10mb)',
+      import_file: 'POST /api/import/file  (multipart JSON file upload, up to 500mb)',
+      search:  'GET /api/clients/search?q=',
       clients: 'GET /api/clients'
     }
   });
 });
 
-// Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
   res.status(500).json({ success: false, message: err.message });
 });
 
 app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════╗
-║  🚀 Server running on port ${PORT}        ║
-║  API: http://localhost:${PORT}/api        ║
-╚════════════════════════════════════════╝
-  `);
+  console.log(`\n🚀 Server running on http://localhost:${PORT}/api\n`);
 });
