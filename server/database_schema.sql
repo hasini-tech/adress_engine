@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS clients (
     state VARCHAR(100),
     country VARCHAR(100),
     postal_code VARCHAR(50),
+    quality_score INT NULL,
+    quality_band VARCHAR(50),
+    metadata JSON NULL,
     
     -- Audit fields
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -47,6 +50,8 @@ CREATE TABLE IF NOT EXISTS clients (
     INDEX idx_updated_at (updated_at),
     INDEX idx_is_active (is_active),
     INDEX idx_last_imported (last_imported_at),
+    INDEX idx_import_batch (import_batch_id),
+    INDEX idx_quality_band (quality_band),
     
     -- Full-text search indexes
     FULLTEXT idx_fulltext_search (name, email, company, address, city, state, country)

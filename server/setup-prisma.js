@@ -38,15 +38,43 @@ async function setupDatabase() {
         state VARCHAR(100),
         country VARCHAR(100),
         postal_code VARCHAR(50),
+        quality_score INT NULL,
+        quality_band VARCHAR(50) NULL,
+        metadata JSON NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        import_id VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_email (email),
         INDEX idx_company (company),
-        INDEX idx_created_at (created_at)
+        INDEX idx_created_at (created_at),
+        INDEX idx_import_id (import_id),
+        INDEX idx_quality_band (quality_band)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
     console.log('✅ Created clients table');
     
+    const clientColumnUpgrades = [
+      "ALTER TABLE clients ADD COLUMN quality_score INT NULL",
+      "ALTER TABLE clients ADD COLUMN quality_band VARCHAR(50) NULL",
+      "ALTER TABLE clients ADD COLUMN metadata JSON NULL",
+      "ALTER TABLE clients ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
+      "ALTER TABLE clients ADD COLUMN import_id VARCHAR(100)",
+      "ALTER TABLE clients ADD INDEX idx_import_id (import_id)",
+      "ALTER TABLE clients ADD INDEX idx_quality_band (quality_band)"
+    ];
+
+    for (const statement of clientColumnUpgrades) {
+      try {
+        await connection.query(statement);
+      } catch (error) {
+        if (!String(error.message).toLowerCase().includes('duplicate')) {
+          throw error;
+        }
+      }
+    }
+    console.log('âœ… Ensured client score columns exist');
+
     // Create import_logs table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS import_logs (
