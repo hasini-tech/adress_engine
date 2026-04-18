@@ -20,6 +20,8 @@ model Client {
   state       String?  @db.VarChar(100)
   country     String?  @db.VarChar(100)
   postal_code String?  @db.VarChar(50)
+  quality_score Int?
+  quality_band  String?  @db.VarChar(50)
   metadata    Json?
   is_active   Boolean  @default(true)
   import_id   String?  @db.VarChar(100)
@@ -31,6 +33,7 @@ model Client {
   @@index([company])
   @@index([city])
   @@index([import_id])
+  @@index([quality_band])
   @@fulltext([name, email, company, city])
   @@map("clients")
 }

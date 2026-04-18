@@ -39,7 +39,14 @@ const SearchEngine = () => {
   const cellStyle = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
+    whiteSpace: 'nowrap',
+    verticalAlign: 'top'
+  };
+
+  const displayValue = (value) => {
+    if (value === undefined || value === null) return '-';
+    const text = String(value).trim();
+    return text || '-';
   };
 
   return (
@@ -52,7 +59,7 @@ const SearchEngine = () => {
       <input
         type="text"
         className="search-input"
-        placeholder="Search Name, Email, Company, or ID..."
+        placeholder="Search ID, Name, Address, Email, Phone, City, State, or Company..."
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
@@ -61,7 +68,7 @@ const SearchEngine = () => {
       />
 
       <div className="table-responsive" style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'auto' }}>
-        <table className="data-table" style={{ width: '100%', minWidth: '1220px', tableLayout: 'fixed' }}>
+        <table className="data-table" style={{ width: '100%', minWidth: '1280px', tableLayout: 'fixed' }}>
           <thead
             style={{
               position: 'sticky',
@@ -73,21 +80,20 @@ const SearchEngine = () => {
           >
             <tr>
               <th style={{ width: '8%' }}>ID</th>
-              <th style={{ width: '12%' }}>Name</th>
-              <th style={{ width: '16%' }}>Email</th>
+              <th style={{ width: '14%' }}>Name</th>
+              <th style={{ width: '22%' }}>Address</th>
+              <th style={{ width: '18%' }}>Email</th>
               <th style={{ width: '10%' }}>Phone</th>
-              <th style={{ width: '12%' }}>Company</th>
-              <th style={{ width: '16%' }}>Address</th>
               <th style={{ width: '10%' }}>City</th>
               <th style={{ width: '8%' }}>State</th>
-              <th style={{ width: '8%' }}>Country</th>
+              <th style={{ width: '10%' }}>Company</th>
             </tr>
           </thead>
 
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="9" className="text-center p-6">Loading...</td>
+                <td colSpan="8" className="text-center p-6">Loading...</td>
               </tr>
             ) : results.length > 0 ? (
               results.map((client, index) => {
@@ -96,36 +102,33 @@ const SearchEngine = () => {
                     <td>
                       <span className="badge">{getDisplayId(client)}</span>
                     </td>
-                    <td style={{ fontWeight: 600, ...cellStyle }} title={client.name}>
-                      {client.name}
+                    <td style={{ fontWeight: 600, ...cellStyle }} title={displayValue(client.name)}>
+                      {displayValue(client.name)}
                     </td>
-                    <td style={cellStyle} title={client.email}>
-                      {client.email}
+                    <td style={cellStyle} title={displayValue(client.address)}>
+                      {displayValue(client.address)}
                     </td>
-                    <td style={cellStyle} title={client.phone}>
-                      {client.phone}
+                    <td style={cellStyle} title={displayValue(client.email)}>
+                      {displayValue(client.email)}
                     </td>
-                    <td style={cellStyle} title={client.company}>
-                      {client.company}
+                    <td style={cellStyle} title={displayValue(client.phone)}>
+                      {displayValue(client.phone)}
                     </td>
-                    <td style={cellStyle} title={client.address}>
-                      {client.address}
+                    <td style={cellStyle} title={displayValue(client.city)}>
+                      {displayValue(client.city)}
                     </td>
-                    <td style={cellStyle} title={client.city}>
-                      {client.city}
+                    <td style={cellStyle} title={displayValue(client.state)}>
+                      {displayValue(client.state)}
                     </td>
-                    <td style={cellStyle} title={client.state}>
-                      {client.state}
-                    </td>
-                    <td style={cellStyle} title={client.country}>
-                      {client.country}
+                    <td style={cellStyle} title={displayValue(client.company)}>
+                      {displayValue(client.company)}
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan="9" className="text-center p-6">No results found</td>
+                <td colSpan="8" className="text-center p-6">No results found</td>
               </tr>
             )}
           </tbody>
