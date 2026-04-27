@@ -1,30 +1,25 @@
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+const {
+  getConfiguredDatabaseName,
+  getMysqlServerConnectionOptions
+} = require('./lib/databaseConfig');
 
-console.log('🔧 Setting up database...\n');
+console.log('Setting up database...\n');
 
 async function setupDatabase() {
   let connection;
-  
-  try {
-    // Connect to MySQL
-    connection = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      port: process.env.DB_PORT || 3306
-    });
+  const databaseName = getConfiguredDatabaseName() || 'client_data';
 
-    console.log('✅ Connected to MySQL');
-    
-    // Create database
-    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME}\``);
-    console.log(`✅ Database '${process.env.DB_NAME}' created/checked`);
-    
-    // Use the database
-    await connection.query(`USE \`${process.env.DB_NAME}\``);
-    
-    // Create clients table
+  try {
+    connection = await mysql.createConnection(getMysqlServerConnectionOptions());
+
+    console.log('Connected to MySQL');
+
+    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName}\``);
+    console.log(`Database '${databaseName}' created/checked`);
+
+    await connection.query(`USE \`${databaseName}\``);
+
     await connection.query(`
       CREATE TABLE IF NOT EXISTS clients (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -52,16 +47,16 @@ async function setupDatabase() {
         INDEX idx_quality_band (quality_band)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
-    console.log('✅ Created clients table');
-    
+    console.log('Created clients table');
+
     const clientColumnUpgrades = [
-      "ALTER TABLE clients ADD COLUMN quality_score INT NULL",
-      "ALTER TABLE clients ADD COLUMN quality_band VARCHAR(50) NULL",
-      "ALTER TABLE clients ADD COLUMN metadata JSON NULL",
-      "ALTER TABLE clients ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
-      "ALTER TABLE clients ADD COLUMN import_id VARCHAR(100)",
-      "ALTER TABLE clients ADD INDEX idx_import_id (import_id)",
-      "ALTER TABLE clients ADD INDEX idx_quality_band (quality_band)"
+      'ALTER TABLE clients ADD COLUMN quality_score INT NULL',
+      'ALTER TABLE clients ADD COLUMN quality_band VARCHAR(50) NULL',
+      'ALTER TABLE clients ADD COLUMN metadata JSON NULL',
+      'ALTER TABLE clients ADD COLUMN is_active BOOLEAN DEFAULT TRUE',
+      'ALTER TABLE clients ADD COLUMN import_id VARCHAR(100)',
+      'ALTER TABLE clients ADD INDEX idx_import_id (import_id)',
+      'ALTER TABLE clients ADD INDEX idx_quality_band (quality_band)'
     ];
 
     for (const statement of clientColumnUpgrades) {
@@ -73,9 +68,8 @@ async function setupDatabase() {
         }
       }
     }
-    console.log('âœ… Ensured client score columns exist');
+    console.log('Ensured client score columns exist');
 
-    // Create import_logs table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS import_logs (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -93,21 +87,20 @@ async function setupDatabase() {
         INDEX idx_started_at (started_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
-    console.log('✅ Created import_logs table');
-    
-    console.log('\n🎉 Database setup completed successfully!');
-    console.log('\n📊 Next steps:');
+    console.log('Created import_logs table');
+
+    console.log('\nDatabase setup completed successfully!');
+    console.log('\nNext steps:');
     console.log('   1. Start server: npm start');
     console.log('   2. Test API: http://localhost:5000/health');
     console.log('   3. Import data via POST http://localhost:5000/api/data/import');
-    
   } catch (error) {
-    console.error('❌ Database setup failed:', error.message);
-    console.log('\n💡 Troubleshooting:');
+    console.error('Database setup failed:', error.message);
+    console.log('\nTroubleshooting:');
     console.log('   1. Check if MySQL is running');
     console.log('   2. Verify username/password');
     console.log('   3. Try connecting manually:');
-    console.log(`      mysql -u root -p${process.env.DB_PASSWORD || ''}`);
+    console.log(`      mysql -u root -p${getMysqlServerConnectionOptions().password || ''}`);
   } finally {
     if (connection) {
       await connection.end();

@@ -1,8 +1,9 @@
 import axios from 'axios';
+import { API_BASE_URL, API_HEALTH_URL } from './config/apiBase';
 
 // ─── Base instance ───────────────────────────────────────────────────────────
 const api = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: API_BASE_URL,
   timeout: 300000, // 5 min for normal requests
 });
 
@@ -75,5 +76,8 @@ export const getImportStatus = (importId) =>
 
 export const getStats = () =>
   api.get('/stats');
+
+export const checkServerHealth = () =>
+  axios.get(API_HEALTH_URL, { timeout: 5000 });
 
 export default api;

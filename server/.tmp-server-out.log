@@ -1,0 +1,37 @@
+[dotenv@17.2.3] injecting env (8) from .env -- tip: ✅ audit secrets and track compliance: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 📡 add observability to secrets: https://dotenvx.com/ops
+Server running on http://127.0.0.1:5000/api
+Database connected (mysql:****@127.0.0.1:3306/version_addressengine?connection_limit=10)
+
+========== FIRST RECORD TRANSFORMED ==========
+{
+  "client_id": "EMAIL_00a0aa860e8531663267f9687302609f",
+  "name": "Mary",
+  "email": "adlinmary.j@gmail.com",
+  "phone": "9940457826",
+  "company": null,
+  "address": "5, Senguttuvan street, Muthamizh nagar, Landmark: Near Vignesh mahal",
+  "city": "Pammal, Chennai",
+  "state": "TN",
+  "country": null,
+  "postal_code": "600075",
+  "metadata": {
+    "orderId": 98402,
+    "order": "Curly Mask (CG Mask) - 100gms x 1,Anti-Acne Pack - 50gms x 1",
+    "orderDate": 45580.94642921296,
+    "total": 450,
+    "shipping": 40,
+    "shippingMethod": "Registered parcel (India Post)",
+    "tracking": "CT550707855IN",
+    "weight": 180,
+    "barcode": "*98402*",
+    "qualityScore": 90,
+    "qualityBand": "excellent"
+  },
+  "qualityScore": 90,
+  "qualityBand": "excellent",
+  "is_active": true,
+  "import_id": "IMP_bb3f648d_1777272010944"
+}
+==============================================
+

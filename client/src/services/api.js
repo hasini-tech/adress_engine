@@ -1,7 +1,5 @@
 import axios from 'axios';
-
-// Use environment variable or fallback to localhost
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+import { API_BASE_URL, API_HEALTH_URL } from '../config/apiBase';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -80,7 +78,7 @@ export const getImportStatus = async () => {
 // Health check - FIXED EXPORT
 export const checkServerHealth = async () => {
   try {
-    const response = await axios.get('http://localhost:5000/health', { timeout: 5000 });
+    const response = await axios.get(API_HEALTH_URL, { timeout: 5000 });
     return response.data;
   } catch (error) {
     console.warn('Server health check failed:', error.message);

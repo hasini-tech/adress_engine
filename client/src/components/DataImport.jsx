@@ -1,9 +1,10 @@
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { toast } from 'react-toastify';
+import { API_IMPORT_FILE_URL } from '../config/apiBase';
 
-// Hard-coded upload URL so large uploads bypass the shared axios timeout.
-const UPLOAD_URL = 'http://localhost:5000/api/import/file';
+// Keep uploads on the same backend instance as the rest of the app.
+const UPLOAD_URL = API_IMPORT_FILE_URL;
 
 const DataImport = () => {
   const [file, setFile] = useState(null);
@@ -58,16 +59,28 @@ const DataImport = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const data = JSON.parse(xhr.responseText);
-          setStats(data.summary);
+          const summary = data.summary || {};
+          setStats(summary);
           setProgress(0);
-          toast.success('Import completed successfully.');
+          if (summary.warning) {
+            toast.warning(summary.warning);
+          } else {
+            toast.success(data.message || 'Import completed successfully.');
+          }
         } catch {
           toast.error('Server returned invalid JSON.');
         }
       } else {
         try {
           const errorResponse = JSON.parse(xhr.responseText);
-          toast.error(errorResponse.message || `Server error ${xhr.status}`);
+          if (errorResponse.summary) {
+            setStats(errorResponse.summary);
+          }
+          if (errorResponse.summary?.warning) {
+            toast.warning(errorResponse.message || errorResponse.summary.warning || `Server warning ${xhr.status}`);
+          } else {
+            toast.error(errorResponse.message || `Server error ${xhr.status}`);
+          }
         } catch {
           toast.error(`Request failed with status ${xhr.status}`);
         }
@@ -282,6 +295,23 @@ const DataImport = () => {
             <h3 className="results-title" style={{ margin: 0, color: '#0f172a' }}>Import Complete</h3>
           </div>
 
+          {stats.warning && (
+            <div
+              style={{
+                marginTop: '1rem',
+                marginBottom: '1rem',
+                padding: '0.95rem 1rem',
+                borderRadius: 14,
+                background: '#fffbeb',
+                border: '1px solid #f59e0b',
+                color: '#92400e',
+                fontWeight: 600
+              }}
+            >
+              {stats.warning}
+            </div>
+          )}
+
           <div className="stats-grid">
             <div className="stat-card">
               <div className="stat-value">{stats.totalReceived?.toLocaleString() ?? '-'}</div>
@@ -318,6 +348,80 @@ const DataImport = () => {
               <div className="stat-label">Duration</div>
             </div>
           </div>
+
+          {stats.averageQualityScore != null ? (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '1rem',
+                borderRadius: 14,
+                background: '#eef2ff',
+                border: '1px solid #c7d2fe'
+              }}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div className="stat-card" style={{ flex: '1 1 140px' }}>
+                  <div className="stat-value" style={{ color: '#4338ca' }}>
+                    {stats.averageQualityScore}
+                  </div>
+                  <div className="stat-label">Average Score</div>
+                </div>
+                <div className="stat-card" style={{ flex: '1 1 140px' }}>
+                  <div className="stat-value" style={{ color: '#0f766e' }}>
+                    {stats.highestQualityScore ?? '-'}
+                  </div>
+                  <div className="stat-label">Highest Score</div>
+                </div>
+                <div className="stat-card" style={{ flex: '1 1 140px' }}>
+                  <div className="stat-value" style={{ color: '#b91c1c' }}>
+                    {stats.lowestQualityScore ?? '-'}
+                  </div>
+                  <div className="stat-label">Lowest Score</div>
+                </div>
+                <div className="stat-card" style={{ flex: '1 1 140px' }}>
+                  <div className="stat-value" style={{ color: '#7c3aed' }}>
+                    {stats.averageQualityBand ?? '-'}
+                  </div>
+                  <div className="stat-label">Average Band</div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '0.85rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {Object.entries(stats.qualityBands || {}).map(([band, count]) => (
+                  <span
+                    key={band}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: 999,
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      color: '#334155',
+                      fontSize: '0.875rem',
+                      fontWeight: 600
+                    }}
+                  >
+                    {band}: {count}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '0.95rem 1rem',
+                borderRadius: 14,
+                background: '#f8fafc',
+                border: '1px dashed #94a3b8',
+                color: '#475569'
+              }}
+            >
+              No quality score could be calculated for this file. Make sure the JSON includes client fields like name, email, phone, and address.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -325,11 +429,6 @@ const DataImport = () => {
 };
 
 export default DataImport;
-
-
-
-
-
 
 
 

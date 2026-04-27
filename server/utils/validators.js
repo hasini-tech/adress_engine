@@ -45,12 +45,12 @@ class DataValidator {
       client_id: ['client_id', 'clientId', 'id', 'ID', 'customer_id', 'customerId', 'user_id', 'userId'],
       name: ['name', 'full_name', 'fullName', 'customer_name', 'customerName', 'client_name', 'displayName'],
       email: ['email', 'email_address', 'emailAddress', 'e_mail', 'mail'],
-      phone: ['phone', 'phone_number', 'phoneNumber', 'telephone', 'tel', 'mobile', 'cell'],
+      phone: ['phone', 'phone_number', 'phoneNumber', 'telephone', 'tel', 'mobile', 'cell', 'contact'],
       company: ['company', 'company_name', 'companyName', 'organization', 'org', 'business'],
       address: ['address', 'street', 'street_address', 'streetAddress', 'address_line_1', 'address1'],
       city: ['city', 'town', 'locality'],
-      state: ['state', 'province', 'region', 'state_province'],
-      country: ['country', 'nation', 'country_name', 'countryName'],
+      state: ['state', 'province', 'region', 'state_province', 'emirates'],
+      country: ['country', 'nation', 'country_name', 'countryName', 'uae'],
       postal_code: ['postal_code', 'postalCode', 'zip', 'zipCode', 'zip_code', 'postcode']
     };
 

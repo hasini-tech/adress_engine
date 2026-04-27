@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
+const DataValidator = require('../utils/validators');
 
 class ClientService {
 
@@ -77,16 +78,158 @@ class ClientService {
     };
   }
 
+  sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  normalizeLookupKey(value) {
+    if (!this.hasMeaningfulValue(value)) return '';
+    return String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  isConnectionPoolTimeout(error) {
+    const message = String(error?.message || error || '');
+    return /Timed out fetching a new connection from the connection pool/i.test(message);
+  }
+
+  isUniqueConstraintError(error) {
+    const message = String(error?.message || error || '');
+    return error?.code === 'P2002' || /Unique constraint failed/i.test(message);
+  }
+
+  async withDatabaseRetry(operation, { label = 'database operation', retries = 3, baseDelayMs = 250 } = {}) {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (!this.isConnectionPoolTimeout(error) || attempt >= retries) {
+          throw error;
+        }
+
+        const waitMs = baseDelayMs * (2 ** attempt);
+        attempt += 1;
+        console.warn(`[${label}] connection pool timeout, retrying in ${waitMs}ms (${attempt}/${retries})`);
+        await this.sleep(waitMs);
+      }
+    }
+  }
+
+  async runWithConcurrency(items, concurrency, handler) {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const limit = Math.max(1, Math.min(concurrency || 1, items.length));
+    let index = 0;
+
+    const workers = Array.from({ length: limit }, async () => {
+      while (index < items.length) {
+        const currentIndex = index++;
+        if (currentIndex >= items.length) return;
+        await handler(items[currentIndex], currentIndex);
+      }
+    });
+
+    await Promise.all(workers);
+  }
+
+  buildClientWriteData(record, importId) {
+    return {
+      client_id:   record.client_id,
+      name:        record.name,
+      email:       record.email,
+      phone:       record.phone,
+      company:     record.company,
+      address:     record.address,
+      city:        record.city,
+      state:       record.state,
+      country:     record.country,
+      postal_code: record.postal_code,
+      quality_score: record.qualityScore,
+      quality_band:  record.qualityBand,
+      metadata:    record.metadata ?? undefined,
+      is_active:   true,
+      import_id:   importId
+    };
+  }
+
+  readFilePreview(filePath, maxBytes = 32768) {
+    const fs = require('fs');
+    const fd = fs.openSync(filePath, 'r');
+
+    try {
+      const size = Math.max(1, maxBytes);
+      const buffer = Buffer.alloc(size);
+      const bytesRead = fs.readSync(fd, buffer, 0, size, 0);
+      return buffer.toString('utf8', 0, bytesRead);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  isLikelyWordPressBackup(preview) {
+    const text = String(preview || '');
+    return /^#\s*WordPress MySQL database backup/i.test(text) ||
+      /^#\s*Created by UpdraftPlus/i.test(text) ||
+      /^--\s*WordPress database dump/i.test(text) ||
+      /\bINSERT INTO\s+`?wp_/i.test(text) ||
+      /\bCREATE TABLE\s+`?wp_/i.test(text);
+  }
+
+  detectRootArrayKey(preview) {
+    const text = String(preview || '');
+
+    for (const key of ['clients', 'records', 'data']) {
+      const matcher = new RegExp(`["']${key}["']\\s*:\\s*\\[`, 'i');
+      if (matcher.test(text)) {
+        return key;
+      }
+    }
+
+    const genericMatch = text.match(/["']([^"']+)["']\s*:\s*\[\s*\{/);
+    if (genericMatch) {
+      return genericMatch[1];
+    }
+
+    return null;
+  }
+
+  validateImportPreview(filePath) {
+    const preview = this.readFilePreview(filePath);
+    const trimmed = preview.replace(/^\uFEFF/, '').trimStart();
+
+    if (!trimmed) {
+      throw new Error('Uploaded file is empty.');
+    }
+
+    if (this.isLikelyWordPressBackup(trimmed)) {
+      throw new Error('Uploaded file looks like a WordPress database backup, not a JSON client export.');
+    }
+
+    const firstChar = trimmed[0];
+    if (firstChar !== '[' && firstChar !== '{') {
+      throw new Error('Invalid import file. Expected a JSON array or object.');
+    }
+
+    return {
+      firstChar,
+      preview: trimmed
+    };
+  }
+
   async ensureQualityColumns() {
     if (!this.ensureQualityColumnsPromise) {
       this.ensureQualityColumnsPromise = (async () => {
-        const columns = await prisma.$queryRawUnsafe(`
-          SELECT COLUMN_NAME
-          FROM INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME = 'clients'
-            AND COLUMN_NAME IN ('quality_score', 'quality_band')
-        `);
+        const columns = await this.withDatabaseRetry(
+          () => prisma.$queryRawUnsafe(`
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'clients'
+              AND COLUMN_NAME IN ('quality_score', 'quality_band')
+          `),
+          { label: 'ensureQualityColumns lookup' }
+        );
 
         const columnNames = new Set(
           columns.map((column) => column.COLUMN_NAME || column.column_name)
@@ -98,7 +241,10 @@ class ClientService {
 
         for (const clause of missingColumns) {
           try {
-            await prisma.$executeRawUnsafe(`ALTER TABLE clients ${clause}`);
+            await this.withDatabaseRetry(
+              () => prisma.$executeRawUnsafe(`ALTER TABLE clients ${clause}`),
+              { label: `ensureQualityColumns ${clause}` }
+            );
           } catch (error) {
             if (!String(error.message).toLowerCase().includes('duplicate')) {
               throw error;
@@ -114,13 +260,13 @@ class ClientService {
     return this.ensureQualityColumnsPromise;
   }
 
-  async processBulkImport(clients, importId) {
+  async processBulkImport(clients, importId, fieldMappings = null) {
     await this.ensureQualityColumns();
-    if (typeof clients === 'string') return this._processFile(clients, importId);
-    return this._processArray(clients, importId);
+    if (typeof clients === 'string') return this._processFile(clients, importId, fieldMappings);
+    return this._processArray(clients, importId, fieldMappings);
   }
 
-  _processFile(filePath, importId) {
+  _processFile(filePath, importId, fieldMappings = null) {
     return new Promise(async (resolve, reject) => {
       const fs         = require('fs');
       const JSONStream = require('JSONStream');
@@ -130,17 +276,42 @@ class ClientService {
       const startTime = Date.now();
       let sampleLogged = false;
       let finished = false;
+      let detectedFieldMappings = fieldMappings;
+      const sampleRecords = [];
+      const pendingBatchPromises = new Set();
 
-      let firstChar = '';
-      const peek = fs.createReadStream(filePath, { start: 0, end: 200, encoding: 'utf8' });
-      await new Promise(r => { peek.on('data', c => { firstChar = c.trimStart()[0]; }); peek.on('close', r); });
+      const trackBatchPromise = (promise) => {
+        pendingBatchPromises.add(promise);
+        promise.finally(() => {
+          pendingBatchPromises.delete(promise);
+        });
+        return promise;
+      };
 
-      const parser = firstChar === '[' ? JSONStream.parse([true]) : JSONStream.parse(['data', true]);
+      let filePreview;
+      let firstChar;
+      try {
+        ({ firstChar, preview: filePreview } = this.validateImportPreview(filePath));
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      const rootKey = firstChar === '[' ? null : this.detectRootArrayKey(filePreview);
+      const parser = firstChar === '['
+        ? JSONStream.parse([true])
+        : rootKey
+          ? JSONStream.parse([rootKey, true])
+          : JSONStream.parse([true, true]);
+
+      if (firstChar !== '[' && !rootKey) {
+        console.warn(`[${importId}] No explicit root array key detected; using a generic top-level array scan.`);
+      }
       const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
 
       const processBatch = async (batch) => {
         try {
-          const r = await this.processBatch(batch, importId);
+          const r = await this.processBatch(batch, importId, detectedFieldMappings);
           inserted += r.inserted; updated += r.updated; failed += r.failed;
           this.mergeQualityStats(qualityStats, r.qualityStats);
         } catch (e) {
@@ -149,47 +320,103 @@ class ClientService {
         }
       };
 
+      const ingestParsedValue = (value) => {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            ingestParsedValue(item);
+          }
+          return;
+        }
+
+        if (!value || typeof value !== 'object') {
+          return;
+        }
+
+        const transformed = this.transformRecord(value, importId, detectedFieldMappings);
+        const nestedChildren = Object.values(value).filter((child) => child && typeof child === 'object');
+
+        if (!transformed && nestedChildren.length > 0) {
+          for (const nested of nestedChildren) {
+            ingestParsedValue(nested);
+          }
+          return;
+        }
+
+        if (this.isIgnorableRecord(value)) {
+          return;
+        }
+
+        scanned++;
+
+        if (!detectedFieldMappings && value && typeof value === 'object' && !Array.isArray(value)) {
+          sampleRecords.push(value);
+          if (sampleRecords.length >= 5) {
+            detectedFieldMappings = DataValidator.detectFieldMappings(sampleRecords);
+          }
+        }
+
+        if (!sampleLogged) {
+          console.log('\n========== FIRST RECORD TRANSFORMED ==========');
+          console.log(JSON.stringify(transformed, null, 2));
+          if (!transformed) {
+            console.warn(`[${importId}] First parsed record did not map to a client record.`);
+          }
+          console.log('==============================================\n');
+          sampleLogged = true;
+        }
+
+        total++;
+        buffer.push(value);
+        if (buffer.length >= BATCH_SIZE) {
+          parser.pause();
+          const batch = buffer.splice(0, BATCH_SIZE);
+          const batchPromise = processBatch(batch)
+            .then(() => {
+              return prisma.importLog.update({
+                where: { import_id: importId },
+                data: { processed: scanned, inserted_records: inserted, updated_records: updated, failed_records: failed }
+              }).catch(() => {});
+            })
+            .finally(() => {
+              if (!finished) parser.resume();
+            });
+
+          trackBatchPromise(batchPromise);
+        }
+      };
+
       const finalizeImport = async (warningMessage = null) => {
         if (finished) return null;
         finished = true;
+
+        if (!detectedFieldMappings && sampleRecords.length > 0) {
+          detectedFieldMappings = DataValidator.detectFieldMappings(sampleRecords);
+        }
 
         if (buffer.length > 0) {
           const remaining = buffer.splice(0, buffer.length);
           await processBatch(remaining);
         }
 
+        if (pendingBatchPromises.size > 0) {
+          await Promise.allSettled([...pendingBatchPromises]);
+        }
+
+        if (!warningMessage) {
+          if (scanned === 0) {
+            warningMessage = 'No JSON records were found in the uploaded file. Check the root array/object structure.';
+          } else if (scanned > 0 && total === 0) {
+            warningMessage = 'No valid client records were found in the uploaded file.';
+          } else if (total > 0 && inserted === 0 && updated === 0) {
+            warningMessage = 'No valid client records were found in the uploaded file.';
+          }
+        }
+
         const duration = Date.now() - startTime;
         return this._finalize(importId, inserted, updated, failed, duration, total, qualityStats, warningMessage);
       };
 
-      parser.on('data', (record) => {
-        scanned++;
-
-        if (this.isIgnorableRecord(record)) {
-          return;
-        }
-
-        if (!sampleLogged) {
-          const sample = this.transformRecord(record, importId);
-          console.log('\n========== FIRST RECORD TRANSFORMED ==========');
-          console.log(JSON.stringify(sample, null, 2));
-          console.log('==============================================\n');
-          sampleLogged = true;
-        }
-        total++;
-        buffer.push(record);
-        if (buffer.length >= BATCH_SIZE) {
-          parser.pause();
-          const batch = buffer.splice(0, BATCH_SIZE);
-          processBatch(batch).then(() => {
-            prisma.importLog.update({
-              where: { import_id: importId },
-              data: { processed: scanned, inserted_records: inserted, updated_records: updated, failed_records: failed }
-            }).catch(() => {});
-            parser.resume();
-          }).catch(() => parser.resume());
-        }
-      });
+      parser.on('data', ingestParsedValue);
 
       parser.on('end', async () => {
         try { resolve(await finalizeImport()); }
@@ -212,19 +439,27 @@ class ClientService {
     });
   }
 
-  async _processArray(clients, importId) {
+  async _processArray(clients, importId, fieldMappings = null) {
     const BATCH_SIZE = 500, startTime = Date.now();
     let inserted = 0, updated = 0, failed = 0;
     const qualityStats = this.createEmptyQualityStats();
+    const detectedFieldMappings = fieldMappings || (
+      clients.length > 0
+        ? DataValidator.detectFieldMappings(clients.slice(0, 10))
+        : null
+    );
     const importableClients = clients.filter((record) => !this.isIgnorableRecord(record));
+    const warningMessage = clients.length > 0 && importableClients.length === 0
+      ? 'No valid client records were found in the uploaded data.'
+      : null;
 
     for (let i = 0; i < importableClients.length; i += BATCH_SIZE) {
       const batch = importableClients.slice(i, i + BATCH_SIZE);
       try {
-        const r = await this.processBatch(batch, importId);
+        const r = await this.processBatch(batch, importId, detectedFieldMappings);
         inserted += r.inserted; updated += r.updated; failed += r.failed;
         this.mergeQualityStats(qualityStats, r.qualityStats);
-        prisma.importLog.update({
+        await prisma.importLog.update({
           where: { import_id: importId },
           data: { processed: i + batch.length, inserted_records: inserted, updated_records: updated, failed_records: failed }
         }).catch(() => {});
@@ -233,7 +468,16 @@ class ClientService {
         failed += batch.length;
       }
     }
-    return this._finalize(importId, inserted, updated, failed, Date.now() - startTime, importableClients.length, qualityStats);
+    return this._finalize(
+      importId,
+      inserted,
+      updated,
+      failed,
+      Date.now() - startTime,
+      importableClients.length,
+      qualityStats,
+      warningMessage
+    );
   }
 
   async _finalize(importId, inserted, updated, failed, duration, total, qualityStats = this.createEmptyQualityStats(), warningMessage = null) {
@@ -265,13 +509,13 @@ class ClientService {
     };
   }
 
-  async processBatch(records, importId) {
+  async processBatch(records, importId, fieldMappings = null) {
     await this.ensureQualityColumns();
     const validRecords = [];
     let failed = 0;
     for (const record of records) {
       try {
-        const t = this.transformRecord(record, importId);
+        const t = this.transformRecord(record, importId, fieldMappings);
         if (t) validRecords.push(t); else failed++;
       } catch (e) {
         console.error('Transform error:', e.message);
@@ -298,68 +542,112 @@ class ClientService {
     if (validRecords.length === 0) return { inserted: 0, updated: 0, failed, qualityStats };
 
     const clientIds   = validRecords.map(r => r.client_id);
-    const existing    = await prisma.client.findMany({
+    const existing    = await this.withDatabaseRetry(() => prisma.client.findMany({
       where: { client_id: { in: clientIds } },
       select: { client_id: true }
-    });
+    }), { label: `[${importId}] client lookup` });
     const existingSet = new Set(existing.map(e => e.client_id));
     const toInsert    = validRecords.filter(r => !existingSet.has(r.client_id));
     const toUpdate    = validRecords.filter(r =>  existingSet.has(r.client_id));
+    let inserted = 0;
+    let updated = 0;
 
     if (toInsert.length > 0) {
-      await prisma.client.createMany({
-        data: toInsert.map(r => ({
-          client_id:   r.client_id,
-          name:        r.name,
-          email:       r.email,
-          phone:       r.phone,
-          company:     r.company,
-          address:     r.address,
-          city:        r.city,
-          state:       r.state,
-          country:     r.country,
-          postal_code: r.postal_code,
-          metadata:    r.metadata ?? undefined,
-          is_active:   true,
-          import_id:   importId
-        })),
-        skipDuplicates: true
-      });
+      const insertChunkSize = 100;
+      for (let i = 0; i < toInsert.length; i += insertChunkSize) {
+        const chunk = toInsert.slice(i, i + insertChunkSize);
+        const payload = chunk.map((record) => this.buildClientWriteData(record, importId));
+
+        try {
+          const result = await this.withDatabaseRetry(
+            () => prisma.client.createMany({
+              data: payload,
+              skipDuplicates: true
+            }),
+            { label: `[${importId}] client.createMany` }
+          );
+          inserted += result?.count ?? payload.length;
+        } catch (error) {
+          console.warn(`[${importId}] Bulk insert failed for ${chunk.length} records, retrying individually:`, error.message);
+          await this.runWithConcurrency(payload, 3, async (data) => {
+            try {
+              await this.withDatabaseRetry(
+                () => prisma.client.create({ data }),
+                { label: `[${importId}] client.create ${data.client_id}` }
+              );
+              inserted += 1;
+            } catch (fallbackError) {
+              if (this.isUniqueConstraintError(fallbackError)) {
+                return;
+              }
+
+              console.error(`[${importId}] Insert failed for ${data.client_id}:`, fallbackError.message);
+              failed += 1;
+            }
+          });
+        }
+      }
     }
 
     if (toUpdate.length > 0) {
-      await Promise.all(toUpdate.map(r =>
-        prisma.client.updateMany({
-          where: { client_id: r.client_id },
-          data: {
-            name:        r.name,
-            email:       r.email,
-            phone:       r.phone,
-            company:     r.company,
-            address:     r.address,
-            city:        r.city,
-            state:       r.state,
-            country:     r.country,
-            postal_code: r.postal_code,
-            metadata:    r.metadata ?? undefined,
-            is_active:   true,
-            import_id:   importId,
-            updated_at:  new Date()
-          }
-        })
-      ));
+      await this.runWithConcurrency(toUpdate, 3, async (record) => {
+        try {
+          const result = await this.withDatabaseRetry(
+            () => prisma.client.updateMany({
+              where: { client_id: record.client_id },
+              data: this.buildClientWriteData(record, importId)
+            }),
+            { label: `[${importId}] client.updateMany ${record.client_id}` }
+          );
+          updated += result?.count ?? 0;
+        } catch (error) {
+          console.error(`[${importId}] Update failed for ${record.client_id}:`, error.message);
+          failed += 1;
+        }
+      });
     }
 
-    await Promise.all(validRecords.map((record) =>
-      prisma.$executeRaw`
-        UPDATE clients
-        SET quality_score = ${record.qualityScore},
-            quality_band = ${record.qualityBand}
-        WHERE client_id = ${record.client_id}
-      `
-    ));
+    return { inserted, updated, failed, qualityStats };
+  }
 
-    return { inserted: toInsert.length, updated: toUpdate.length, failed, qualityStats };
+  getMappedValue(raw, fieldMappings, fieldName) {
+    const mappings = fieldMappings?.mappings || fieldMappings;
+    const mappedField = mappings?.[fieldName];
+    if (!mappedField) return null;
+
+    const value = this.getRawValue(raw, mappedField);
+    return this.hasMeaningfulValue(value) ? value : null;
+  }
+
+  getRawValue(raw, ...fieldNames) {
+    if (!raw || typeof raw !== 'object') return null;
+
+    const normalizedEntries = Object.entries(raw).map(([key, value]) => [this.normalizeLookupKey(key), value]);
+
+    for (const fieldName of fieldNames) {
+      if (!this.hasMeaningfulValue(fieldName)) continue;
+
+      const directValue = raw[fieldName];
+      if (this.hasMeaningfulValue(directValue) && typeof directValue !== 'object' && typeof directValue !== 'boolean') {
+        return directValue;
+      }
+
+      const normalizedFieldName = this.normalizeLookupKey(fieldName);
+      if (!normalizedFieldName) continue;
+
+      for (const [normalizedKey, value] of normalizedEntries) {
+        if (
+          normalizedKey === normalizedFieldName &&
+          this.hasMeaningfulValue(value) &&
+          typeof value !== 'object' &&
+          typeof value !== 'boolean'
+        ) {
+          return value;
+        }
+      }
+    }
+
+    return null;
   }
 
   pickFirstNonEmpty(...values) {
@@ -458,6 +746,9 @@ class ClientService {
     if (!text || text.length > 60) return false;
     if (/\d/.test(text)) return false;
     if (!/[A-Za-z]/.test(text)) return false;
+    if (this.looksLikeStateCode(text) || this.looksLikePostalCode(text) || this.looksLikeSpreadsheetSerialDate(text)) {
+      return false;
+    }
     if (/[<>@]/.test(text)) return false;
     if (/courier|parcel|payment|razorpay|phonepe|gateway|tracking|barcode|weight|document|merged|print|order|shipping/i.test(text)) {
       return false;
@@ -473,13 +764,14 @@ class ClientService {
     if (!text || text.length > 30) return false;
     if (text.startsWith('__EMPTY')) return false;
     if (/\d/.test(text)) return false;
+    if (/(^|_)id$/i.test(text)) return false;
     if (!/[A-Za-z]/.test(text)) return false;
-    if (/courier|parcel|payment|razorpay|phonepe|gateway|tracking|barcode|weight|document|merged|print|order|address|country|postcode|zip|shipping|email|phone/i.test(text)) {
+    if (/courier|parcel|payment|razorpay|phonepe|gateway|tracking|barcode|weight|document|merged|print|order|address|city|town|village|district|state|province|region|country|postcode|postal|zip|shipping|email|phone|location|area|county|mandal|taluka|taluk|pincode/i.test(text)) {
       return false;
     }
     if (/^[A-Z]{2,3}$/.test(text)) return false;
 
-    return /^[A-Za-z][A-Za-z .,'&()/-]*$/.test(text);
+    return /^[A-Za-z][A-Za-z .,'&()/_-]*$/.test(text);
   }
 
   looksLikeAddressKey(key) {
@@ -519,9 +811,76 @@ class ClientService {
     const meaningfulEntries = Object.entries(raw).filter(([, value]) => this.hasMeaningfulValue(value));
     if (meaningfulEntries.length === 0) return true;
 
+    if (meaningfulEntries.every(([, value]) => typeof value === 'number' || typeof value === 'bigint')) {
+      return true;
+    }
+
     if (this.looksLikeLogisticsManifestRecord(raw, meaningfulEntries)) return true;
 
     return meaningfulEntries.every(([key]) => this.isAuxiliaryOnlyField(key));
+  }
+
+  isContainerMetadataKey(key) {
+    if (key === undefined || key === null) return false;
+
+    const normalizedKey = this.normalizeLookupKey(key);
+    if (!normalizedKey) return false;
+
+    return /^(sourcefile|sourcetype|generatedutc|generatedat|generatedon|containscustomerdata|exportedtables|rowcounts|tables|metadata|meta|summary)$/.test(normalizedKey) ||
+      /^(table|tables|rows|records|data)$/.test(normalizedKey) ||
+      /source(file|type)|generated|rowcounts?|exportedtables?|containscustomerdata/.test(normalizedKey);
+  }
+
+  shouldTraverseNestedRecords(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+
+    const meaningfulEntries = Object.entries(raw).filter(([, value]) => this.hasMeaningfulValue(value));
+    if (meaningfulEntries.length === 0) return false;
+
+    const hasCollectionChildren = meaningfulEntries.some(([, value]) => value && typeof value === 'object');
+    if (!hasCollectionChildren) return false;
+
+    const hasKnownNestedCollections = meaningfulEntries.some(([key, value]) => {
+      if (!this.isContainerMetadataKey(key) || !value || typeof value !== 'object') return false;
+
+      if (Array.isArray(value)) {
+        return value.some((entry) => entry && typeof entry === 'object');
+      }
+
+      return Object.values(value).some((entry) =>
+        Array.isArray(entry)
+          ? entry.some((nested) => nested && typeof nested === 'object')
+          : !!entry && typeof entry === 'object'
+      );
+    });
+
+    if (hasKnownNestedCollections) return true;
+
+    const scalarEntries = meaningfulEntries.filter(([, value]) => !value || typeof value !== 'object');
+    if (scalarEntries.length > 0 && scalarEntries.every(([key]) => this.isContainerMetadataKey(key))) {
+      return true;
+    }
+
+    const hasClientSignals = meaningfulEntries.some(([key, value]) => {
+      if (value && typeof value === 'object') return false;
+
+      const normalizedKey = this.normalizeLookupKey(key);
+      if (!normalizedKey) return false;
+      if (this.isContainerMetadataKey(key)) return false;
+
+      if (/client|customer|name|email|phone|address|city|state|country|postcode|postal|zip|company|order|first|last|billing|shipping|username|userid/.test(normalizedKey)) {
+        return true;
+      }
+
+      return this.looksLikeEmail(value) ||
+        this.looksLikePhone(value) ||
+        this.looksLikePostalCode(value) ||
+        this.looksLikeStateCode(value) ||
+        this.looksLikePersonText(value) ||
+        this.looksLikeAddressValue(value);
+    });
+
+    return hasCollectionChildren && !hasClientSignals;
   }
 
   looksLikeLogisticsManifestRecord(raw, meaningfulEntries = null) {
@@ -740,12 +1099,20 @@ class ClientService {
     };
   }
 
-  buildClientId(raw, email, phone, name) {
-    const explicitId = this.pickFirstNonEmpty(
+  buildClientId(raw, email, phone, name, fieldMappings = null) {
+    const mappedClientId = this.getMappedValue(raw, fieldMappings, 'client_id');
+    const addressType = this.pickFirstNonEmpty(raw.address_type, raw.addressType);
+    const customerId = this.pickFirstNonEmpty(raw.customer_id, raw.customerId);
+    const rowId = this.pickFirstNonEmpty(
       raw._id && typeof raw._id === 'object' ? raw._id.$oid : raw._id,
+      raw.id
+    );
+    const explicitId = this.pickFirstNonEmpty(
+      mappedClientId,
       raw.client_id,
       raw.clientId,
-      raw.id
+      customerId ? `CUSTOMER_${String(customerId)}` : null,
+      rowId ? `ROW_${addressType ? `${String(addressType).trim().toUpperCase()}_` : ''}${String(rowId)}` : null
     );
     if (explicitId) return String(explicitId);
 
@@ -764,12 +1131,38 @@ class ClientService {
       return `ORDER_${String(orderId)}`;
     }
 
-    const fallbackBase = this.pickFirstNonEmpty(name, raw['Billing Email'], raw['Billing First name']);
+    const fallbackBase = this.pickFirstNonEmpty(
+      name,
+      this.getRawValue(raw, 'Email', 'Billing Email', 'Shipping Email', 'Email Address'),
+      this.getRawValue(raw, 'Billing First name', 'First Name')
+    );
     if (fallbackBase) {
       return `CLI_${crypto.createHash('md5').update(String(fallbackBase)).digest('hex')}`;
     }
 
     return `CLI_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  buildFallbackDisplayName({ name, company, address, city, state, email, phone, spreadsheetName = null }) {
+    const emailLabel = this.looksLikeEmail(email)
+      ? String(email).split('@')[0].replace(/[._-]+/g, ' ').trim()
+      : null;
+    const normalizedPhone = this.normalizePhone(phone);
+    const phoneLabel = normalizedPhone
+      ? `Phone ${String(normalizedPhone).replace(/[^\d]/g, '').slice(-4)}`
+      : null;
+    const locationLabel = [city, state].filter(Boolean).join(' ').trim() || city || state;
+
+    return this.pickFirstNonEmpty(
+      name,
+      spreadsheetName,
+      company,
+      address,
+      locationLabel,
+      emailLabel,
+      phoneLabel,
+      'Unknown'
+    );
   }
 
   extractPhoneFromAddress(address) {
@@ -859,22 +1252,45 @@ class ClientService {
   // Mongo-style:  phone, originalPhone, customerName, email, tenantName
   // Nested:       billingAddress.{ address1, address2, city, state, postcode, country, company }
   // Order-sheet:  Billing First name, Billing Last name, Billing Email, Billing Address 1, Order ID
-  transformRecord(raw, importId) {
-    if (!raw || typeof raw !== 'object' || this.isIgnorableRecord(raw)) return null;
+  transformRecord(raw, importId, fieldMappings = null) {
+    if (!raw || typeof raw !== 'object' || this.isIgnorableRecord(raw) || this.shouldTraverseNestedRecords(raw)) return null;
     const shiftedOrderFallback = this.inferShiftedOrderExport(raw);
     const spreadsheetFallback = this.inferSpreadsheetFallback(raw);
+    const mapped = {
+      client_id: this.getMappedValue(raw, fieldMappings, 'client_id'),
+      name: this.getMappedValue(raw, fieldMappings, 'name'),
+      email: this.getMappedValue(raw, fieldMappings, 'email'),
+      phone: this.getMappedValue(raw, fieldMappings, 'phone'),
+      company: this.getMappedValue(raw, fieldMappings, 'company'),
+      address: this.getMappedValue(raw, fieldMappings, 'address'),
+      address1: this.getMappedValue(raw, fieldMappings, 'address1'),
+      address2: this.getMappedValue(raw, fieldMappings, 'address2'),
+      city: this.getMappedValue(raw, fieldMappings, 'city'),
+      state: this.getMappedValue(raw, fieldMappings, 'state'),
+      country: this.getMappedValue(raw, fieldMappings, 'country'),
+      postal_code: this.getMappedValue(raw, fieldMappings, 'postal_code')
+    };
 
     // ── Name ──────────────────────────────────────────────────────────────
-    let name = this.pickFirstNonEmpty(
+    const rawName = this.pickFirstNonEmpty(
+      mapped.name,
       shiftedOrderFallback && shiftedOrderFallback.name,
       raw.customerName,
       raw.customer_name,
+      this.getRawValue(raw, 'Customer Name', 'CustomerName'),
       raw.name,
-      raw['Billing Name']
+      this.getRawValue(raw, 'Billing Name', 'Billing Name ')
     );
+    let name = rawName;
+
     if (!name) {
-      const first = this.pickFirstNonEmpty(raw['Billing First name'], raw['First Name']);
-      const last = this.pickFirstNonEmpty(raw['Billing Last name'], raw['Last Name']);
+      const first = this.pickFirstNonEmpty(
+        this.getRawValue(raw, 'Billing First name', 'First Name'),
+        this.getRawValue(raw, 'Billing Name')
+      );
+      const last = this.pickFirstNonEmpty(
+        this.getRawValue(raw, 'Billing Last name', 'Last Name')
+      );
       if (first || last) {
         name = [first, last].filter(Boolean).join(' ').trim();
       }
@@ -885,15 +1301,18 @@ class ClientService {
       const last  = b.lastName  || b.last_name  || '';
       if (first || last) name = `${first} ${last}`.trim();
     }
+    if (!name) {
+      name = spreadsheetFallback.name;
+    }
 
     // ── Phone ─────────────────────────────────────────────────────────────
     const phone = this.normalizePhone(
       this.pickFirstNonEmpty(
+        mapped.phone,
         shiftedOrderFallback && shiftedOrderFallback.phone,
+        this.getRawValue(raw, 'Phone', 'Billing Phone', 'Shipping Phone', 'Contact', 'Billing Contact'),
         raw.phone,
         raw.originalPhone,
-        raw['Phone'],
-        raw['Billing Phone'],
         raw.billingAddress && raw.billingAddress.phone,
         raw.shippingAddress && raw.shippingAddress.phone,
         this.looksLikePhone(raw['Customer Note']) ? raw['Customer Note'] : null,
@@ -904,39 +1323,26 @@ class ClientService {
 
     // ── Email ─────────────────────────────────────────────────────────────
     const email = this.pickFirstNonEmpty(
+      mapped.email,
       shiftedOrderFallback && shiftedOrderFallback.email,
+      this.getRawValue(raw, 'Email', 'Billing Email', 'Shipping Email', 'Billing Mail', 'Mail', 'Email Address'),
       raw.email,
-      raw['Billing Email'],
       raw['Email'],
       raw.billingAddress && raw.billingAddress.email,
       raw.shippingAddress && raw.shippingAddress.email,
       spreadsheetFallback.email
     );
 
-    if (!name) {
-      name = this.pickFirstNonEmpty(
-        spreadsheetFallback.name,
-        email ? String(email).split('@')[0].replace(/[._-]+/g, ' ') : null,
-        phone ? `Phone ${String(phone).slice(-4)}` : null
-      );
-    }
-    if (!name) return null;
-
     // ── Nested address objects ────────────────────────────────────────────
     const b = (raw.billingAddress  && typeof raw.billingAddress  === 'object') ? raw.billingAddress  : {};
     const s = (raw.shippingAddress && typeof raw.shippingAddress === 'object') ? raw.shippingAddress : {};
 
-    const clientId = this.buildClientId(
-      raw,
-      (shiftedOrderFallback && shiftedOrderFallback.clientIdEmailSeed) || email,
-      phone,
-      name
-    );
-
     // Company
     const company = this.pickMeaningfulCompany(
       phone,
+      mapped.company,
       shiftedOrderFallback && shiftedOrderFallback.company,
+      this.getRawValue(raw, 'Company', 'Billing Company', 'Shipping Company'),
       b.company,
       raw.tenantName,
       s.company,
@@ -948,16 +1354,22 @@ class ClientService {
     // Address — combine address1 + address2
     const addr1 = this.pickFirstNonEmpty(
       shiftedOrderFallback && shiftedOrderFallback.address1,
+      mapped.address1,
+      this.normalizeAddressSegment(mapped.address),
+      this.normalizeAddressSegment(this.getRawValue(raw, 'Address 1', 'Billing Address 1', 'Shipping Address 1', 'Address', 'Billing Address', 'Shipping Address')),
       this.normalizeAddressSegment(b.address1),
       this.normalizeAddressSegment(s.address1),
       this.normalizeAddressSegment(raw.address),
       this.normalizeAddressSegment(raw['Billing Address 1']),
+      this.normalizeAddressSegment(this.getRawValue(raw, 'Billing Address', 'Billing Address ')),
       this.normalizeAddressSegment(raw['Address 1']),
       this.normalizeAddressSegment(raw['Address']),
       this.normalizeAddressSegment(spreadsheetFallback.address1)
     ) || '';
     const addr2 = this.pickFirstNonEmpty(
       shiftedOrderFallback && shiftedOrderFallback.address2,
+      mapped.address2,
+      this.normalizeAddressSegment(this.getRawValue(raw, 'Address 2', 'Billing Address 2', 'Shipping Address 2')),
       this.normalizeAddressSegment(b.address2),
       this.normalizeAddressSegment(s.address2),
       this.normalizeAddressSegment(raw['Billing Address 2']),
@@ -968,9 +1380,11 @@ class ClientService {
 
     // City
     const city = this.pickFirstNonEmpty(
+      mapped.city,
       shiftedOrderFallback && shiftedOrderFallback.city,
       b.city,
       s.city,
+      this.getRawValue(raw, 'City', 'Billing City', 'Shipping City'),
       raw.city,
       raw['City'],
       raw['Billing City'],
@@ -979,29 +1393,36 @@ class ClientService {
 
     // State
     const state = this.pickFirstNonEmpty(
+      mapped.state,
       shiftedOrderFallback && shiftedOrderFallback.state,
       b.state,
       s.state,
+      this.getRawValue(raw, 'State', 'Billing State', 'Shipping State'),
       raw.state,
       raw['State'],
       raw['Billing State'],
+      this.getRawValue(raw, 'Emirates'),
       spreadsheetFallback.state
     );
 
     // Country
     const country = this.pickFirstNonEmpty(
+      mapped.country,
       b.country,
       s.country,
+      this.getRawValue(raw, 'Country', 'Billing Country', 'Shipping Country', 'Country Code'),
       raw.country,
       raw.countryCode,
       raw['Country'],
       raw['Billing Country'],
       raw['Country Code'],
+      this.getRawValue(raw, 'Emirates') ? 'UAE' : null,
       spreadsheetFallback.country
     );
 
     // Postal code — your field is "postcode"
     const postal_code = this.pickFirstNonEmpty(
+      mapped.postal_code,
       shiftedOrderFallback && shiftedOrderFallback.postal_code,
       b.postcode,
       b.postal_code,
@@ -1011,6 +1432,7 @@ class ClientService {
       s.postal_code,
       s.zip,
       s.zipCode,
+      this.getRawValue(raw, 'Postcode', 'Postal Code', 'Post Code', 'Zip', 'Zip Code', 'Billing Postcode', 'Shipping Postcode', 'Billing Zip', 'Shipping Zip'),
       raw.postcode,
       raw.postal_code,
       raw.zip,
@@ -1019,6 +1441,25 @@ class ClientService {
       raw['Postal Code'],
       spreadsheetFallback.postal_code
     );
+
+    const clientId = this.buildClientId(
+      raw,
+      (shiftedOrderFallback && shiftedOrderFallback.clientIdEmailSeed) || email,
+      phone,
+      name,
+      fieldMappings
+    );
+
+    const displayName = this.buildFallbackDisplayName({
+      name,
+      spreadsheetName: spreadsheetFallback.name,
+      company,
+      address,
+      city,
+      state,
+      email,
+      phone
+    });
 
     // ── Metadata ──────────────────────────────────────────────────────────
     const meta = {};
@@ -1071,7 +1512,7 @@ class ClientService {
 
     return {
       client_id:   String(clientId).substring(0, 100),
-      name:        String(name).substring(0, 255),
+      name:        String(displayName).substring(0, 255),
       email:       email       ? String(email).toLowerCase().substring(0, 255) : null,
       phone:       phone       ? String(phone).substring(0, 50)                : null,
       company:     company     ? String(company).substring(0, 255)             : null,

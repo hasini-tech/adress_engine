@@ -7,7 +7,7 @@ import WebhookManager from './components/Webhookmanager';
 
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import api from './api';
+import { checkServerHealth } from './api';
 import './App.css';
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -16,7 +16,9 @@ function App() {
   const [serverStatus, setServerStatus] = useState(false);
 
   useEffect(() => {
-    api.get('/').then(() => setServerStatus(true)).catch(() => setServerStatus(false));
+    checkServerHealth()
+      .then(() => setServerStatus(true))
+      .catch(() => setServerStatus(false));
   }, []);
 
   const tabs = [

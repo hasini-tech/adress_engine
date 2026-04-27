@@ -14,10 +14,30 @@ const importClients = async (req, res) => {
       data: { import_id: importId, file_name: 'API_Upload', file_size: BigInt(0), total_records: clientsArray.length, status: 'processing', started_at: new Date() }
     });
     const summary = await clientService.processBulkImport(clientsArray, importId);
-    res.json({ success: true, importId, message: 'Import completed', summary });
+    const hasSuccessfulRecords = (summary?.newlyInserted || 0) > 0 || (summary?.existingUpdated || 0) > 0;
+
+    if (summary?.warning && !hasSuccessfulRecords) {
+      return res.status(400).json({
+        success: false,
+        importId,
+        message: summary.warning,
+        summary
+      });
+    }
+
+    res.json({
+      success: true,
+      importId,
+      message: summary?.warning ? 'Import completed with warnings' : 'Import completed',
+      summary
+    });
   } catch (error) {
     prisma.importLog.update({ where: { import_id: importId }, data: { status: 'failed', error_message: error.message, completed_at: new Date() } }).catch(() => {});
-    res.status(500).json({ success: false, importId, message: error.message });
+    const message = String(error?.message || '');
+    const statusCode = /no data provided|uploaded file|invalid import file|wordpress database backup|json parse failed|empty/i.test(message)
+      ? 400
+      : 500;
+    res.status(statusCode).json({ success: false, importId, message: error.message });
   }
 };
 
@@ -30,12 +50,33 @@ const importFile = async (req, res) => {
       data: { import_id: importId, file_name: req.file.originalname, file_size: BigInt(req.file.size), total_records: 0, status: 'processing', started_at: new Date() }
     });
     const summary = await clientService.processBulkImport(filePath, importId);
+    const hasSuccessfulRecords = (summary?.newlyInserted || 0) > 0 || (summary?.existingUpdated || 0) > 0;
+
+    if (summary?.warning && !hasSuccessfulRecords) {
+      require('fs').unlink(filePath, () => {});
+      return res.status(400).json({
+        success: false,
+        importId,
+        message: summary.warning,
+        summary
+      });
+    }
+
     require('fs').unlink(filePath, () => {});
-    res.json({ success: true, importId, message: 'Import completed', summary });
+    res.json({
+      success: true,
+      importId,
+      message: summary?.warning ? 'Import completed with warnings' : 'Import completed',
+      summary
+    });
   } catch (error) {
     if (filePath) require('fs').unlink(filePath, () => {});
     prisma.importLog.update({ where: { import_id: importId }, data: { status: 'failed', error_message: error.message, completed_at: new Date() } }).catch(() => {});
-    res.status(500).json({ success: false, importId, message: error.message });
+    const message = String(error?.message || '');
+    const statusCode = /uploaded file|invalid import file|wordpress database backup|json parse failed|empty/i.test(message)
+      ? 400
+      : 500;
+    res.status(statusCode).json({ success: false, importId, message: error.message });
   }
 };
 
