@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import DataImport from './components/DataImport';
 import SearchEngine from './components/SearchEngine';
+import ApiKeyHub from './components/ApiKeyHub';
 
 // ✅ FIXED: Using lowercase 'm' in the file path to match what Windows sees on disk
 import WebhookManager from './components/Webhookmanager'; 
@@ -24,6 +25,7 @@ function App() {
   const tabs = [
     { id: 'import',   label: '📥 Import Data' },
     { id: 'search',   label: '🔍 Database Search' },
+    { id: 'keys',     label: '🔐 API Keys' },
     { id: 'webhooks', label: '🔗 Webhooks' },
   ];
 
@@ -61,6 +63,7 @@ function App() {
         {/* View Content */}
         {activeTab === 'import'   && <DataImport />}
         {activeTab === 'search'   && <SearchEngine />}
+        {activeTab === 'keys'     && <ApiKeyHub />}
         {activeTab === 'webhooks' && <WebhookManager />}
       </main>
 

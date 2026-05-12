@@ -9,6 +9,8 @@ const SearchEngine = () => {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const limit = 50;
+  const trimmedQuery = query.trim();
+  const isSearchMode = trimmedQuery.length >= 2;
 
   const normalizeField = (value) => {
     if (value === undefined || value === null) return null;
@@ -136,22 +138,38 @@ const SearchEngine = () => {
   };
 
   useEffect(() => {
+    let isActive = true;
+    const delay = isSearchMode ? 400 : 0;
+
     const delayDebounceFn = setTimeout(async () => {
       setLoading(true);
 
       try {
-        const response = await api.get(`/clients/search?q=${query}&page=${page}&limit=${limit}`);
+        const response = await api.get(isSearchMode ? '/clients/search' : '/clients', {
+          params: isSearchMode
+            ? { q: trimmedQuery, page, limit }
+            : { page, limit }
+        });
+
+        if (!isActive) return;
+
         setResults(response.data.clients || []);
         setTotal(response.data.total || 0);
       } catch (error) {
-        toast.error('Search failed');
+        if (!isActive) return;
+        toast.error(error?.response?.data?.message || 'Search failed');
       } finally {
-        setLoading(false);
+        if (isActive) {
+          setLoading(false);
+        }
       }
-    }, 400);
+    }, delay);
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [query, page]);
+    return () => {
+      isActive = false;
+      clearTimeout(delayDebounceFn);
+    };
+  }, [isSearchMode, trimmedQuery, page]);
 
   const getDisplayId = (client) => {
     let id = client.client_id || client._id || client.id || '';
@@ -180,7 +198,9 @@ const SearchEngine = () => {
     <div className="search-container">
       <h2 className="import-title">Record Search</h2>
       <p className="import-description" style={{ marginBottom: '1.5rem' }}>
-        Live search across {total.toLocaleString()} records.
+        {isSearchMode
+          ? `Showing ${total.toLocaleString()} matching records.`
+          : `Showing ${total.toLocaleString()} recent records. Enter at least 2 characters to search by ID, name, address, email, phone, city, state, or company.`}
       </p>
 
       <input
@@ -264,7 +284,9 @@ const SearchEngine = () => {
               })
             ) : (
               <tr>
-                <td colSpan="10" className="text-center p-6">No results found</td>
+                <td colSpan="10" className="text-center p-6">
+                  {isSearchMode ? 'No results found' : 'No records available'}
+                </td>
               </tr>
             )}
           </tbody>
@@ -272,7 +294,9 @@ const SearchEngine = () => {
       </div>
 
       <div className="pagination">
-        <span className="file-size">Showing {results.length} results</span>
+        <span className="file-size">
+          Showing {results.length} of {total.toLocaleString()} results
+        </span>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
             className="btn-outline"

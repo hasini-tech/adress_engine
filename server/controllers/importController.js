@@ -84,7 +84,10 @@ const search = async (req, res) => {
   try {
     const { q, query, page = 1, limit = 50 } = req.query;
     res.json(await clientService.searchClients(q || query || '', parseInt(page) || 1, parseInt(limit) || 50));
-  } catch (error) { res.status(500).json({ success: false, message: 'Search failed' }); }
+  } catch (error) {
+    console.error('Search failed:', error);
+    res.status(500).json({ success: false, message: error.message || 'Search failed' });
+  }
 };
 
 const getClients = async (req, res) => {

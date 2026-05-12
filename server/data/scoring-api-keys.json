@@ -1,0 +1,32 @@
+{
+  "keys": [
+    {
+      "id": "45b4f331-6ddd-4c53-8830-1073ae8be573",
+      "label": "gowhats",
+      "platform": "Another Platform",
+      "apiKey": "sk_test_51QxY7AbCdEfGhIjKlMnOpQrStUvWxYz1234567890abcdef",
+      "apiKeyPreview": "sk_tes...cdef",
+      "status": "saved",
+      "createdAt": "2026-05-12T06:43:04.482Z",
+      "updatedAt": "2026-05-12T06:43:04.482Z",
+      "lastScoredAt": null,
+      "totalScore": null,
+      "scoreBand": null,
+      "totalRecords": null
+    },
+    {
+      "id": "405cdce7-5357-4d85-b790-abd9582eea9f",
+      "label": "billzzz",
+      "platform": "Another Platform",
+      "apiKey": "sk-1234567890abcdefghijklmnopqrstuvwxyz",
+      "apiKeyPreview": "sk-123...wxyz",
+      "status": "saved",
+      "createdAt": "2026-05-11T13:21:27.196Z",
+      "updatedAt": "2026-05-11T13:21:27.196Z",
+      "lastScoredAt": null,
+      "totalScore": null,
+      "scoreBand": null,
+      "totalRecords": null
+    }
+  ]
+}

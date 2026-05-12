@@ -3,6 +3,8 @@ const cors = require('cors');
 require('dotenv').config();
 
 const importRoutes = require('./routes/importRoutes');
+const integrationRoutes = require('./routes/integrationRoutes');
+const scoringKeyRoutes = require('./routes/scoringKeyRoutes');
 const { getConfiguredDatabaseName } = require('./lib/databaseConfig');
 const prisma = require('./lib/prisma');
 
@@ -15,6 +17,8 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 app.use('/api', importRoutes);
+app.use('/api/integrations', integrationRoutes);
+app.use('/api', scoringKeyRoutes);
 
 app.get('/', (req, res) => {
   res.json({
@@ -23,7 +27,10 @@ app.get('/', (req, res) => {
       import_json: 'POST /api/import  (body: { clients: [...] }, max ~10mb)',
       import_file: 'POST /api/import/file  (multipart JSON file upload, up to 500mb)',
       search: 'GET /api/clients/search?q=',
-      clients: 'GET /api/clients'
+      clients: 'GET /api/clients',
+      scoring_api_keys: 'GET/POST /api/api-keys',
+      api_keys: 'GET/POST /api/integrations/api-keys',
+      checkout_lookup: 'GET /api/checkout/lookup?q=...  (requires x-api-key)'
     }
   });
 });

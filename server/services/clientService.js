@@ -82,6 +82,18 @@ class ClientService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  normalizePagination(page = 1, limit = 50, maxLimit = 100) {
+    const normalizedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const requestedLimit = parseInt(limit, 10) || 50;
+    const normalizedLimit = Math.min(Math.max(requestedLimit, 1), maxLimit);
+
+    return {
+      page: normalizedPage,
+      limit: normalizedLimit,
+      skip: (normalizedPage - 1) * normalizedLimit
+    };
+  }
+
   normalizeLookupKey(value) {
     if (!this.hasMeaningfulValue(value)) return '';
     return String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -1530,33 +1542,52 @@ class ClientService {
   }
 
   async searchClients(query, page = 1, limit = 50) {
-    const skip  = (page - 1) * limit;
-    const where = query?.trim() ? {
+    const { page: normalizedPage, limit: normalizedLimit, skip } = this.normalizePagination(page, limit);
+    const normalizedQuery = String(query || '').trim();
+
+    if (normalizedQuery.length < 2) {
+      return {
+        clients: [],
+        total: 0,
+        page: normalizedPage,
+        limit: normalizedLimit,
+        message: 'Enter at least 2 characters to search.'
+      };
+    }
+
+    const where = {
       OR: [
-        { name:      { contains: query } },
-        { address:   { contains: query } },
-        { email:     { contains: query } },
-        { company:   { contains: query } },
-        { phone:     { contains: query } },
-        { city:      { contains: query } },
-        { state:     { contains: query } },
-        { client_id: { contains: query } }
+        { name:      { contains: normalizedQuery } },
+        { address:   { contains: normalizedQuery } },
+        { email:     { contains: normalizedQuery } },
+        { company:   { contains: normalizedQuery } },
+        { phone:     { contains: normalizedQuery } },
+        { city:      { contains: normalizedQuery } },
+        { state:     { contains: normalizedQuery } },
+        { client_id: { contains: normalizedQuery } }
       ]
-    } : {};
+    };
+
     const [clients, total] = await Promise.all([
-      prisma.client.findMany({ where, take: limit, skip, orderBy: { updated_at: 'desc' } }),
+      prisma.client.findMany({ where, take: normalizedLimit, skip, orderBy: { updated_at: 'desc' } }),
       prisma.client.count({ where })
     ]);
-    return { clients: this.serializeClients(clients), total, page, limit };
+    return { clients: this.serializeClients(clients), total, page: normalizedPage, limit: normalizedLimit };
   }
 
   async getAllClients(page = 1, limit = 50) {
-    const skip = (page - 1) * limit;
+    const { page: normalizedPage, limit: normalizedLimit, skip } = this.normalizePagination(page, limit);
     const [clients, total] = await Promise.all([
-      prisma.client.findMany({ take: limit, skip, orderBy: { updated_at: 'desc' } }),
+      prisma.client.findMany({ take: normalizedLimit, skip, orderBy: { updated_at: 'desc' } }),
       prisma.client.count()
     ]);
-    return { clients: this.serializeClients(clients), total, page, limit, totalPages: Math.ceil(total/limit) };
+    return {
+      clients: this.serializeClients(clients),
+      total,
+      page: normalizedPage,
+      limit: normalizedLimit,
+      totalPages: Math.ceil(total / normalizedLimit)
+    };
   }
 
   serializeClients(clients) {
@@ -1576,6 +1607,117 @@ class ClientService {
         qualityBand: normalizedClient.quality_band || metadata?.qualityBand || metadata?.quality_band || (qualityScore !== null ? this.getQualityBand(qualityScore) : null)
       };
     });
+  }
+
+  splitAddress(address) {
+    if (!this.hasMeaningfulValue(address)) {
+      return { address1: null, address2: null };
+    }
+
+    const parts = String(address)
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length <= 1) {
+      return {
+        address1: String(address).trim(),
+        address2: null
+      };
+    }
+
+    return {
+      address1: parts.shift() || null,
+      address2: parts.join(', ') || null
+    };
+  }
+
+  normalizeCheckoutMatch(client) {
+    const { address1, address2 } = this.splitAddress(client.address);
+
+    return {
+      clientId: client.client_id,
+      name: client.name || null,
+      email: client.email || null,
+      phone: client.phone || null,
+      company: client.company || null,
+      address1,
+      address2,
+      city: client.city || null,
+      state: client.state || null,
+      country: client.country || null,
+      postalCode: client.postal_code || null,
+      fullAddress: client.address || null,
+      qualityScore: client.qualityScore ?? null,
+      qualityBand: client.qualityBand ?? null,
+      lastUpdatedAt: client.updated_at || null
+    };
+  }
+
+  async lookupCheckoutAddress({ q = '', email = '', phone = '', limit = 5 } = {}) {
+    const safeLimit = Math.max(1, Math.min(parseInt(limit, 10) || 5, 10));
+    const trimmedQ = String(q || '').trim();
+    const trimmedEmail = String(email || '').trim().toLowerCase();
+    const trimmedPhone = String(phone || '').trim();
+    const normalizedPhone = this.normalizePhone(trimmedPhone);
+
+    const filters = [];
+    if (trimmedEmail) {
+      filters.push({ email: { contains: trimmedEmail } });
+    }
+
+    if (normalizedPhone) {
+      filters.push({ phone: { contains: normalizedPhone.replace(/[^\d+]/g, '') } });
+      filters.push({ phone: { contains: trimmedPhone } });
+    } else if (trimmedPhone) {
+      filters.push({ phone: { contains: trimmedPhone } });
+    }
+
+    if (trimmedQ) {
+      filters.push(
+        { name: { contains: trimmedQ } },
+        { address: { contains: trimmedQ } },
+        { company: { contains: trimmedQ } },
+        { city: { contains: trimmedQ } },
+        { state: { contains: trimmedQ } },
+        { client_id: { contains: trimmedQ } }
+      );
+    }
+
+    if (filters.length === 0) {
+      return {
+        query: {
+          q: null,
+          email: null,
+          phone: null
+        },
+        totalMatches: 0,
+        bestMatch: null,
+        matches: []
+      };
+    }
+
+    const where = { OR: filters };
+
+    const clients = await prisma.client.findMany({
+      where,
+      take: safeLimit,
+      orderBy: { updated_at: 'desc' }
+    });
+
+    const serialized = this.serializeClients(clients);
+    const matches = serialized.map((client) => this.normalizeCheckoutMatch(client));
+
+    return {
+      query: {
+        q: trimmedQ || null,
+        email: trimmedEmail || null,
+        phone: trimmedPhone || null
+      },
+      totalMatches: matches.length,
+      bestMatch: matches[0] || null,
+      matches
+    };
   }
 }
 

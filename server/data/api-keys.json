@@ -1,0 +1,64 @@
+{
+  "keys": [
+    {
+      "id": "77295d18-e60a-43d7-aa5a-9b8bec16942f",
+      "name": "fgbdfbdf",
+      "platform": "GoWhats / WooCommerce",
+      "website": "fdbvdfbvdf",
+      "notes": "bdfgvfd",
+      "keyHash": "cc9fdc4be805f2e01fc712adddfc9342569ff187585c276ded4b9246465f9e0e",
+      "keyPreview": "ae_liv...47a7",
+      "active": true,
+      "createdAt": "2026-05-11T13:09:59.373Z",
+      "lastUsedAt": null,
+      "permissions": [
+        "checkout.lookup"
+      ]
+    },
+    {
+      "id": "7c6e9a65-67b9-46f6-8de6-749d8aedd155",
+      "name": "api key",
+      "platform": "billzzy",
+      "website": "tg",
+      "notes": "rht",
+      "keyHash": "015576f1890a02361bf487b2aa98dad2c27dae9277eee98df6e46a626263ef17",
+      "keyPreview": "ae_liv...789d",
+      "active": true,
+      "createdAt": "2026-05-11T07:44:07.646Z",
+      "lastUsedAt": null,
+      "permissions": [
+        "checkout.lookup"
+      ]
+    },
+    {
+      "id": "3f074db8-b276-4dbf-9af0-8c090d15b0b6",
+      "name": "billzzy",
+      "platform": "GoWhats / WooCommerce",
+      "website": "",
+      "notes": "xsxs",
+      "keyHash": "c297383d20caf2b4ac94bcf3c90b070656d1a47405e9a38feb0c5b13dadb69bd",
+      "keyPreview": "ae_liv...bc93",
+      "active": true,
+      "createdAt": "2026-05-09T11:54:38.737Z",
+      "lastUsedAt": null,
+      "permissions": [
+        "checkout.lookup"
+      ]
+    },
+    {
+      "id": "1b83c163-b5d1-403c-bf72-4cd8b6799b1a",
+      "name": "GoWhats",
+      "platform": "GoWhats / WooCommerce",
+      "website": "https://bot.gowhats.in",
+      "notes": "",
+      "keyHash": "36758efc645684552b68527f4708638d0914c1c3928af47404ba1ad633cda890",
+      "keyPreview": "ae_liv...b135",
+      "active": true,
+      "createdAt": "2026-04-28T11:06:54.562Z",
+      "lastUsedAt": null,
+      "permissions": [
+        "checkout.lookup"
+      ]
+    }
+  ]
+}
