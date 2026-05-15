@@ -6,7 +6,7 @@ import ApiKeyHub from './components/ApiKeyHub';
 // ✅ FIXED: Using lowercase 'm' in the file path to match what Windows sees on disk
 import WebhookManager from './components/Webhookmanager'; 
 
-import { ToastContainer, toast } from 'react-toastify';
+import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { checkServerHealth } from './api';
 import './App.css';

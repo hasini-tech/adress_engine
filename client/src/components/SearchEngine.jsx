@@ -133,7 +133,28 @@ const SearchEngine = () => {
         client.organization,
         client.org,
         client.business
-      ) || client.company
+      ) || client.company,
+      purchaseProduct: firstMeaningful(
+        client.purchase_product,   // ← Prisma snake_case (primary)
+        client.purchaseProduct,
+        metadata.purchase_product,
+        metadata.purchaseProduct,
+        metadata.product,
+        client.product,
+        client.productName,
+        client.product_name
+      ),
+      purchaseAmount: firstMeaningful(
+        client.purchase_amount,    // ← Prisma snake_case (primary)
+        client.purchaseAmount,
+        metadata.purchase_amount,
+        metadata.purchaseAmount,
+        metadata.total,
+        client.amount,
+        client.total,
+        client.totalAmount,
+        client.total_amount
+      )
     };
   };
 
@@ -215,7 +236,7 @@ const SearchEngine = () => {
       />
 
       <div className="table-responsive" style={{ maxHeight: '500px', overflowY: 'auto', overflowX: 'auto' }}>
-        <table className="data-table" style={{ width: '100%', minWidth: '1500px', tableLayout: 'fixed' }}>
+        <table className="data-table" style={{ width: '100%', minWidth: '1750px', tableLayout: 'fixed' }}>
           <thead
             style={{
               position: 'sticky',
@@ -233,7 +254,9 @@ const SearchEngine = () => {
               <th style={{ width: '10%' }}>Phone</th>
               <th style={{ width: '9%' }}>City</th>
               <th style={{ width: '7%' }}>State</th>
-              <th style={{ width: '10%' }}>Company</th>
+              <th style={{ width: '8%' }}>Company</th>
+              <th style={{ width: '10%' }}>Product</th>
+              <th style={{ width: '7%' }}>Amount</th>
               <th style={{ width: '5%' }}>Score</th>
               <th style={{ width: '5%' }}>Band</th>
             </tr>
@@ -242,7 +265,7 @@ const SearchEngine = () => {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="10" className="text-center p-6">Loading...</td>
+                <td colSpan="12" className="text-center p-6">Loading...</td>
               </tr>
             ) : results.length > 0 ? (
               results.map((client, index) => {
@@ -273,18 +296,24 @@ const SearchEngine = () => {
                     <td style={cellStyle} title={displayValue(displayClient.company)}>
                       {displayValue(displayClient.company)}
                     </td>
-                    <td style={{ ...cellStyle, fontWeight: 700 }} title={displayValue(client.qualityScore)}>
-                      {displayValue(client.qualityScore)}
+                    <td style={cellStyle} title={displayValue(displayClient.purchaseProduct)}>
+                      {displayValue(displayClient.purchaseProduct)}
                     </td>
-                    <td style={{ ...cellStyle, textTransform: 'capitalize' }} title={displayValue(client.qualityBand)}>
-                      {displayValue(client.qualityBand)}
+                    <td style={cellStyle} title={displayValue(displayClient.purchaseAmount)}>
+                      {displayValue(displayClient.purchaseAmount)}
+                    </td>
+                    <td style={{ ...cellStyle, fontWeight: 700 }} title={displayValue(client.quality_score ?? client.qualityScore)}>
+                      {displayValue(client.quality_score ?? client.qualityScore)}
+                    </td>
+                    <td style={{ ...cellStyle, textTransform: 'capitalize' }} title={displayValue(client.quality_band ?? client.qualityBand)}>
+                      {displayValue(client.quality_band ?? client.qualityBand)}
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan="10" className="text-center p-6">
+                <td colSpan="12" className="text-center p-6">
                   {isSearchMode ? 'No results found' : 'No records available'}
                 </td>
               </tr>
@@ -319,45 +348,3 @@ const SearchEngine = () => {
 };
 
 export default SearchEngine;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

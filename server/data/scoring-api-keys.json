@@ -1,6 +1,20 @@
 {
   "keys": [
     {
+      "id": "084f68e8-81f7-45ce-9964-cc616dc2cecf",
+      "label": "bot.gowhat",
+      "platform": "Another Platform",
+      "apiKey": "gw_c03b4875de8c353f32d7dc7de01ff0ee158796f47e17fa42c8e459be11dc2725",
+      "apiKeyPreview": "gw_c03...2725",
+      "status": "saved",
+      "createdAt": "2026-05-12T07:48:11.767Z",
+      "updatedAt": "2026-05-12T07:48:11.767Z",
+      "lastScoredAt": null,
+      "totalScore": null,
+      "scoreBand": null,
+      "totalRecords": null
+    },
+    {
       "id": "45b4f331-6ddd-4c53-8830-1073ae8be573",
       "label": "gowhats",
       "platform": "Another Platform",

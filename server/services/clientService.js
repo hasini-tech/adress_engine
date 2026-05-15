@@ -157,6 +157,8 @@ class ClientService {
       state:       record.state,
       country:     record.country,
       postal_code: record.postal_code,
+      purchase_product: record.purchaseProduct,
+      purchase_amount:  record.purchaseAmount,
       quality_score: record.qualityScore,
       quality_band:  record.qualityBand,
       metadata:    record.metadata ?? undefined,
@@ -238,7 +240,7 @@ class ClientService {
             FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE()
               AND TABLE_NAME = 'clients'
-              AND COLUMN_NAME IN ('quality_score', 'quality_band')
+              AND COLUMN_NAME IN ('quality_score', 'quality_band', 'purchase_product', 'purchase_amount')
           `),
           { label: 'ensureQualityColumns lookup' }
         );
@@ -250,6 +252,8 @@ class ClientService {
         const missingColumns = [];
         if (!columnNames.has('quality_score')) missingColumns.push('ADD COLUMN quality_score INT NULL');
         if (!columnNames.has('quality_band')) missingColumns.push('ADD COLUMN quality_band VARCHAR(50) NULL');
+        if (!columnNames.has('purchase_product')) missingColumns.push('ADD COLUMN purchase_product VARCHAR(500) NULL');
+        if (!columnNames.has('purchase_amount')) missingColumns.push('ADD COLUMN purchase_amount DECIMAL(12,2) NULL');
 
         for (const clause of missingColumns) {
           try {
@@ -1256,7 +1260,12 @@ class ClientService {
       city: actualCity,
       state: stateCode || client.state,
       postal_code: this.looksLikePostalCode(client.phone) ? client.phone : client.postal_code,
-      company: null
+      company: null,
+      // Preserve purchase & quality fields — they are unrelated to address shifting
+      purchase_product: client.purchase_product,
+      purchase_amount:  client.purchase_amount,
+      quality_score:    client.quality_score,
+      quality_band:     client.quality_band
     };
   }
 
@@ -1453,6 +1462,7 @@ class ClientService {
       raw['Postal Code'],
       spreadsheetFallback.postal_code
     );
+    const purchase = this.extractPurchaseDetails(raw);
 
     const clientId = this.buildClientId(
       raw,
@@ -1493,6 +1503,8 @@ class ClientService {
       meta.orderDate = this.pickFirstNonEmpty(raw['Date'], raw['Date & Time']);
     }
     if (raw['Total'] != null) meta.total          = raw['Total'];
+    if (purchase.purchaseProduct) meta.purchaseProduct = purchase.purchaseProduct;
+    if (purchase.purchaseAmount) meta.purchaseAmount = purchase.purchaseAmount;
     if (raw['Shipping'] != null) meta.shipping    = raw['Shipping'];
     if (this.hasMeaningfulValue(raw['Shipping Method'])) meta.shippingMethod = raw['Shipping Method'];
     if (this.hasMeaningfulValue(raw['Gateway'])) meta.gateway = raw['Gateway'];
@@ -1533,12 +1545,116 @@ class ClientService {
       state:       state       ? String(state).substring(0, 100)               : null,
       country:     country     ? String(country).substring(0, 100)             : null,
       postal_code: postal_code ? String(postal_code).substring(0, 50)         : null,
+      purchaseProduct: purchase.purchaseProduct,
+      purchaseAmount: purchase.purchaseAmount,
       metadata:    Object.keys(meta).length > 0 ? meta : null,
       qualityScore: quality.score,
       qualityBand: quality.band,
       is_active:   true,
       import_id:   importId
     };
+  }
+
+  normalizePurchaseAmount(value) {
+    if (!this.hasMeaningfulValue(value)) return null;
+
+    if (typeof value === 'object') {
+      const nested = this.pickFirstNonEmpty(value.amount, value.total, value.value, value.price);
+      return this.normalizePurchaseAmount(nested);
+    }
+
+    const numericText = String(value).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+    if (!numericText) return null;
+
+    const amount = Number(numericText[0]);
+    if (!Number.isFinite(amount)) return null;
+
+    return amount.toFixed(2);
+  }
+
+  normalizePurchaseProduct(value) {
+    if (!this.hasMeaningfulValue(value)) return null;
+
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => this.normalizePurchaseProduct(item))
+        .filter(Boolean)
+        .join(', ')
+        .substring(0, 500) || null;
+    }
+
+    if (typeof value === 'object') {
+      const text = this.pickFirstNonEmpty(
+        value.name,
+        value.productName,
+        value.product_name,
+        value.title,
+        value.itemName,
+        value.item_name,
+        value.sku
+      );
+      return this.normalizePurchaseProduct(text);
+    }
+
+    const text = String(value).trim();
+    return text ? text.substring(0, 500) : null;
+  }
+
+  extractPurchaseDetails(raw) {
+    const lineItems = this.pickFirstNonEmpty(
+      raw.line_items,
+      raw.lineItems,
+      raw.items,
+      raw.products,
+      raw.order_items,
+      raw.orderItems,
+      raw.productDetails,
+      raw.product_details
+    );
+    const firstLineItem = Array.isArray(lineItems) ? lineItems[0] : lineItems;
+    const purchaseProduct = this.normalizePurchaseProduct(
+      this.pickFirstNonEmpty(
+        raw.purchase_product,
+        raw.purchaseProduct,
+        raw.product,
+        raw.productName,
+        raw.product_name,
+        raw.product_title,
+        raw.item,
+        raw.itemName,
+        raw.item_name,
+        raw.title,
+        this.getRawValue(raw, 'Product', 'Product Name', 'Item', 'Item Name', 'Line Item', 'Ordered Items'),
+        lineItems
+      )
+    );
+    const purchaseAmount = this.normalizePurchaseAmount(
+      this.pickFirstNonEmpty(
+        raw.purchase_amount,
+        raw.purchaseAmount,
+        raw.amount,
+        raw.totalAmount,
+        raw.total_amount,
+        raw.orderTotal,
+        raw.order_total,
+        raw.grandTotal,
+        raw.grand_total,
+        raw.total,
+        raw.subtotal,
+        raw.price,
+        raw.paymentAmount,
+        raw.payment_amount,
+        this.getRawValue(raw, 'Amount', 'Total', 'Order Total', 'Grand Total', 'Price'),
+        firstLineItem && this.pickFirstNonEmpty(
+          firstLineItem.total,
+          firstLineItem.price,
+          firstLineItem.subtotal,
+          firstLineItem.amount
+        )
+      )
+    );
+
+    return { purchaseProduct, purchaseAmount };
   }
 
   async searchClients(query, page = 1, limit = 50) {
@@ -1603,6 +1719,10 @@ class ClientService {
       return {
         ...normalizedClient,
         id: normalizedClient.id.toString(),
+        purchaseProduct: normalizedClient.purchase_product || metadata?.purchaseProduct || metadata?.purchase_product || null,
+        purchaseAmount: normalizedClient.purchase_amount != null
+          ? String(normalizedClient.purchase_amount)
+          : metadata?.purchaseAmount || metadata?.purchase_amount || null,
         qualityScore,
         qualityBand: normalizedClient.quality_band || metadata?.qualityBand || metadata?.quality_band || (qualityScore !== null ? this.getQualityBand(qualityScore) : null)
       };

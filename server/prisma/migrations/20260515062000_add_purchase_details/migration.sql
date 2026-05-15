@@ -1,0 +1,7 @@
+ALTER TABLE `clients`
+  ADD COLUMN IF NOT EXISTS `purchase_product` VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS `purchase_amount` DECIMAL(12,2) NULL;
+
+ALTER TABLE `platform_customers`
+  ADD COLUMN IF NOT EXISTS `purchaseProduct` VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS `purchaseAmount` DECIMAL(12,2) NULL;

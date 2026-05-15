@@ -1,0 +1,4 @@
+[dotenv@17.2.3] injecting env (8) from .env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+Server running on http://127.0.0.1:5000/api
+Database connected (mysql:****@127.0.0.1:3306/version_addressengine?connection_limit=10)

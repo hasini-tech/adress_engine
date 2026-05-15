@@ -20,6 +20,8 @@ model Client {
   state       String?  @db.VarChar(100)
   country     String?  @db.VarChar(100)
   postal_code String?  @db.VarChar(50)
+  purchase_product String? @db.VarChar(500)
+  purchase_amount  Decimal? @db.Decimal(12, 2)
   quality_score Int?
   quality_band  String?  @db.VarChar(50)
   metadata    Json?
@@ -59,4 +61,44 @@ model ImportLog {
   @@index([status])
   @@index([started_at])
   @@map("import_logs")
+}
+
+model ScoringApiKey {
+  id             Int       @id @default(autoincrement())
+  apiKey         String    @db.Text
+  apiKeyPreview  String?
+  label          String?
+  platform       String?
+  platformKey    String    @default("custom") @db.VarChar(100)
+  baseUrl        String?   @db.VarChar(500)
+  exportPath     String?   @db.VarChar(255)
+  authMode       String    @default("both") @db.VarChar(50)
+  responsePath   String?   @db.VarChar(255)
+  status         String    @default("saved")
+  band           String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  customers      PlatformCustomer[]          // ← this line was missing
+
+  @@map("scoring_api_keys")
+}
+
+model PlatformCustomer {
+  id               Int           @id @default(autoincrement())
+  scoringApiKeyId  Int
+  scoringApiKey    ScoringApiKey @relation(fields: [scoringApiKeyId], references: [id], onDelete: Cascade)
+  externalId       String?
+  name             String?
+  email            String?
+  phone            String?
+  address          String?       @db.Text
+  city             String?
+  state            String?
+  purchaseProduct  String?       @db.VarChar(500)
+  purchaseAmount   Decimal?      @db.Decimal(12, 2)
+  rawData          String?       @db.LongText
+  createdAt        DateTime      @default(now())
+
+  @@unique([scoringApiKeyId, externalId])
+  @@map("platform_customers")
 }
