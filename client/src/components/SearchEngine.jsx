@@ -130,6 +130,12 @@ const SearchEngine = () => {
       company: firstMeaningful(
         client.company,
         metadata.company,
+        metadata.Company,
+        metadata.billingCompany,
+        metadata.shippingCompany,
+        metadata.tenantName,
+        metadata.company_name,
+        metadata.companyName,
         client.organization,
         client.org,
         client.business
@@ -140,6 +146,8 @@ const SearchEngine = () => {
         metadata.purchase_product,
         metadata.purchaseProduct,
         metadata.product,
+        metadata.order,
+        metadata.Order,
         client.product,
         client.productName,
         client.product_name

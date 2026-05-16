@@ -43,18 +43,104 @@ function buildAddressLine(customer) {
     .join(', ');
 }
 
+function safeParseJson(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return {}; }
+}
+
+// Names that platforms use as generic placeholders — not real customer names
+const PLACEHOLDER_NAMES = new Set([
+  'customer', 'customers', 'unnamed customer', 'unnamed', 'guest', 'guest user',
+  'user', 'unknown', 'unknown customer', 'n/a', 'na', 'none', 'null',
+  'no name', 'noname', 'anonymous', 'contact', 'buyer', 'client',
+  'order', 'new customer', 'walk-in', 'walk in',
+]);
+
+function isPlaceholderName(value) {
+  if (!value || typeof value !== 'string') return true;
+  return PLACEHOLDER_NAMES.has(value.trim().toLowerCase());
+}
+
+function pickName(customer) {
+  const d = customer?.details || {};
+  const raw = safeParseJson(customer?.rawData || d?.rawData);
+
+  // Check every possible source in priority order
+  const candidates = [
+    customer?.name,
+    d?.name,
+    raw?.name,
+    raw?.full_name,
+    raw?.fullName,
+    raw?.customer_name,
+    raw?.customerName,
+    raw?.buyer_name,
+    raw?.buyerName,
+    raw?.contact_name,
+    raw?.contactName,
+    raw?.whatsapp_name,
+    raw?.whatsappName,
+    raw?.recipient_name,
+    raw?.billing_name,
+    raw?.shipping_name,
+    raw?.profile_name,
+    raw?.profileName,
+    raw?.order_name,
+    raw?.client_name,
+    (raw?.customerDetails && (raw.customerDetails.name || raw.customerDetails.full_name)),
+    (raw?.customer && (raw.customer.name || raw.customer.full_name)),
+    (raw?.shippingAddress && raw.shippingAddress.name),
+    (raw?.billingAddress && raw.billingAddress.name),
+    ((raw?.first_name || raw?.last_name) ? [raw?.first_name, raw?.last_name].filter(Boolean).join(' ') : null),
+    ((raw?.firstName || raw?.lastName) ? [raw?.firstName, raw?.lastName].filter(Boolean).join(' ') : null),
+  ];
+
+  for (const c of candidates) {
+    if (c && typeof c === 'string' && c.trim() && !isPlaceholderName(c)) {
+      return c.trim();
+    }
+  }
+  return null;
+}
+
 function normalizePreviewCustomer(customer, index = 0) {
-  const details = customer?.details || customer || {};
+  const d = customer?.details || {};
+  const raw = safeParseJson(customer?.rawData || d?.rawData);
+
+  const name = pickName(customer) || '(no name)';
+
+  const email =
+    customer?.email || d?.email || raw?.email || raw?.email_address || null;
+
+  const phone =
+    customer?.phone || d?.phone ||
+    raw?.phone || raw?.phone_number || raw?.mobile ||
+    raw?.whatsapp_number || raw?.contact_number || null;
+
+  const address =
+    buildAddressLine(customer) ||
+    buildAddressLine(d) ||
+    (typeof raw?.address === 'string' ? raw.address : null) ||
+    raw?.delivery_address || raw?.shipping_address || null;
+
+  const purchaseProduct =
+    customer?.purchaseProduct || d?.purchaseProduct || d?.purchase_product ||
+    raw?.purchase_product || raw?.product || raw?.title || null;
+
+  const purchaseAmount =
+    customer?.purchaseAmount || d?.purchaseAmount || d?.purchase_amount ||
+    raw?.purchase_amount || raw?.amount || raw?.total || null;
 
   return {
-    id: customer?.id || details.externalId || `row-${index}`,
-    externalId: customer?.externalId || details.externalId || null,
-    name: details.name || 'Unnamed customer',
-    email: details.email || '-',
-    phone: details.phone || '-',
-    address: buildAddressLine(details) || '-',
-    purchaseProduct: details.purchaseProduct || details.purchase_product || '-',
-    purchaseAmount: details.purchaseAmount || details.purchase_amount || '-',
+    id: customer?.id || customer?.externalId || d?.externalId || `row-${index}`,
+    externalId: customer?.externalId || d?.externalId || null,
+    name,
+    email: email || '-',
+    phone: phone || '-',
+    address: address || '-',
+    purchaseProduct: purchaseProduct || '-',
+    purchaseAmount: purchaseAmount || '-',
   };
 }
 
@@ -493,7 +579,11 @@ export default function ApiKeyScoring() {
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
-                        <strong style={{ color: '#111827' }}>{customer.name}</strong>
+                        <strong style={{ color: '#111827', fontSize: 15 }}>
+                          {customer.name && customer.name !== '(no name)'
+                            ? customer.name
+                            : <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>Name not available</span>}
+                        </strong>
                         <span style={{ color: '#64748b', fontSize: 12 }}>
                           {customer.externalId ? `ID: ${customer.externalId}` : 'No external ID'}
                         </span>

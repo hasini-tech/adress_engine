@@ -1600,6 +1600,23 @@ class ClientService {
     return text ? text.substring(0, 500) : null;
   }
 
+  normalizeOrderProductCandidate(value) {
+    const product = this.normalizePurchaseProduct(value);
+    if (!product) return null;
+
+    if (
+      this.looksLikeEmail(product) ||
+      this.looksLikePhone(product) ||
+      this.looksLikePostalCode(product) ||
+      this.looksLikeSpreadsheetSerialDate(product) ||
+      !/[A-Za-z]/.test(product)
+    ) {
+      return null;
+    }
+
+    return product;
+  }
+
   extractPurchaseDetails(raw) {
     const lineItems = this.pickFirstNonEmpty(
       raw.line_items,
@@ -1612,6 +1629,16 @@ class ClientService {
       raw.product_details
     );
     const firstLineItem = Array.isArray(lineItems) ? lineItems[0] : lineItems;
+    const explicitOrderProduct = this.normalizeOrderProductCandidate(
+      this.pickFirstNonEmpty(
+        raw.orderProduct,
+        raw.order_product,
+        this.getRawValue(raw, 'Order Details', 'Order Items', 'Ordered Products', 'Products Ordered')
+      )
+    );
+    const orderField = this.pickFirstNonEmpty(raw.order, this.getRawValue(raw, 'Order'));
+    const orderProduct = explicitOrderProduct ||
+      (this.looksLikeOrderText(orderField) ? this.normalizeOrderProductCandidate(orderField) : null);
     const purchaseProduct = this.normalizePurchaseProduct(
       this.pickFirstNonEmpty(
         raw.purchase_product,
@@ -1625,6 +1652,7 @@ class ClientService {
         raw.item_name,
         raw.title,
         this.getRawValue(raw, 'Product', 'Product Name', 'Item', 'Item Name', 'Line Item', 'Ordered Items'),
+        orderProduct,
         lineItems
       )
     );
@@ -1677,6 +1705,7 @@ class ClientService {
         { address:   { contains: normalizedQuery } },
         { email:     { contains: normalizedQuery } },
         { company:   { contains: normalizedQuery } },
+        { purchase_product: { contains: normalizedQuery } },
         { phone:     { contains: normalizedQuery } },
         { city:      { contains: normalizedQuery } },
         { state:     { contains: normalizedQuery } },
@@ -1719,7 +1748,20 @@ class ClientService {
       return {
         ...normalizedClient,
         id: normalizedClient.id.toString(),
-        purchaseProduct: normalizedClient.purchase_product || metadata?.purchaseProduct || metadata?.purchase_product || null,
+        company: normalizedClient.company ||
+          metadata?.company ||
+          metadata?.Company ||
+          metadata?.billingCompany ||
+          metadata?.shippingCompany ||
+          metadata?.tenantName ||
+          null,
+        purchaseProduct: normalizedClient.purchase_product ||
+          metadata?.purchaseProduct ||
+          metadata?.purchase_product ||
+          metadata?.product ||
+          metadata?.order ||
+          metadata?.Order ||
+          null,
         purchaseAmount: normalizedClient.purchase_amount != null
           ? String(normalizedClient.purchase_amount)
           : metadata?.purchaseAmount || metadata?.purchase_amount || null,
